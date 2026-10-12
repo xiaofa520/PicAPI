@@ -1,0 +1,11 @@
+/storage/*
+/setup.txt
+!/storage/.htaccess
+/demos/workbench/output/
+/demos/workbench/.playwright-cli/
+/public/pc/log/
+/public/m/log/
+/.playwright-cli/
+/.playwright-mcp/
+/output/
+/tests/output/

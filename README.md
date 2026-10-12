@@ -1,169 +1,158 @@
-# PicAPI 图片接口系统
+# PicAPI
 
-PicAPI 是一个可自行部署的 PHP 图片接口与管理后台。它按请求入口返回 PC、手机或自适应图片，并提供分类、上传、资源管理、访问统计、日志、IP 访问控制、邮件提醒和 API 文档页面。
+## 项目用途
 
-## 功能概览
+PicAPI 用来把自己保存的图片变成一个可管理、可调用的图片服务。它解决的是“图片文件散落在服务器上，网站还要自己找文件、维护图片链接”的问题：你把 PC 和手机图片放进图库并按分类整理，PicAPI 提供固定的 HTTP 地址；每次请求时服务按设备或分类选出一张图片并返回。接入方不需要知道文件名，也不必自己实现随机抽图逻辑。
 
-- `GET /`：根据屏幕宽度或 User-Agent 自动选择 PC / 手机图片。
-- `GET /pc/`：只返回 PC 图片；`GET /m/`：只返回手机图片。
-- 支持直接返回图片、返回图片 URL、返回 JSON 数据和分类请求。
-- 支持多文件、文件夹、拖放及分片上传，图片会根据宽高自动归类至 PC 或手机图库。
-- 提供 PNG 缩略图、数据看板、系统日志、API 配置、IP 黑白名单、邮件提醒和站点设置。
-- 初始化向导支持 SQLite、MySQL、PostgreSQL 与 SQL Server；管理员账号保存至数据库。
+常见用法是给博客、个人主页、壁纸页面、社群机器人或其他应用提供随机配图。调用方可以直接把接口地址作为图片地址，也可以请求 JSON 或图片 URL，再由自己的程序处理。管理员通过后台上传、筛选和管理图片，查看请求统计与访问日志，并设置限流、黑白名单等访问控制。服务由你部署和管理，图片库、站点设置与日志留在自己的服务器上。
+
+最简单的使用方式是在网页中把接口当作图片源：
+
+```html
+<img src="https://你的域名/" alt="随机图片">
+```
+
+需要固定设备或分类时，改用 `/pc/`、`/m/` 或添加 `category` 参数；需要在程序中读取图片信息时，使用 `?type=json`。具体示例见下方“图片与 API 使用”。
+
+## 主要功能
+
+- 自适应、PC、手机图片接口；支持随机图片、分类、图片链接或 JSON 响应。
+- 管理后台提供图库与分类管理、分批浏览、访问控制、访问和登录日志、统计、站点及 API 设置。
+- 初始化向导支持 SQLite、MySQL、PostgreSQL、SQL Server；邮件和 Redis 可按需配置。
+- 提供公开接口文档，并支持在后台编辑文档内容。
+
+## 项目目录
+
+| 路径 | 用途 |
+| --- | --- |
+| `index.php` | 根目录统一入口。将 `/admin/`、`/docs/`、`/pc/`、`/m/` 等公开地址安全地转发到 `public/`。 |
+| `public/` | 对外页面、路由控制器和静态资源；也可按服务器示例配置为网站根目录。 |
+| `public/admin/` | 后台页面、管理 API、上传、账号和设置功能。 |
+| `public/docs/` | 公开 API 文档页面。 |
+| `public/pc/`、`public/m/` | PC 和手机图库资源及接口入口。图片按分类目录存放。 |
+| `src/` | PHP 业务逻辑，包括 API、图库、缓存、安全、设置和邮件服务。 |
+| `templates/admin/` | 后台登录、初始化和工作台页面模板。 |
+| `storage/` | 运行时数据：数据库、安装配置、会话、日志、安全状态和缓存。不要公开或提交其中的数据。 |
+| `config/` | Nginx 根目录部署和 `public/` 根目录部署的配置示例。 |
+| `bin/` | 维护命令及计划任务脚本，例如每日邮件摘要。 |
+
+根目录的 `.htaccess`、`web.config` 和 `public/` 下对应文件用于 Apache、IIS 的访问控制与 URL 重写。`public/admin/assets/vendor/` 内含第三方前端库及其各自的许可证文件；这些文件应与对应库一起保留。
+
+## 架构概览
+
+PicAPI 是一个单体 PHP 应用，代码按功能分布在路由与页面、业务运行时以及数据库和文件存储逻辑中。它还没有独立的存储适配层，也不是由多个服务组成的微服务系统。部署时可以把项目根目录或 `public/` 设为网站根目录：前者由根目录 `index.php` 校验并转发公开路径，后者由 Web 服务器直接处理 `public/` 中的入口。
+
+```mermaid
+flowchart LR
+    C[浏览器或 API 调用方] --> W[Web 服务器]
+    W --> M{网站根目录配置}
+    M -->|项目根目录| R[index.php 路由与路径校验]
+    M -->|public/ 目录| P[public/ 页面与控制器]
+    R --> P
+    P --> API[图片 API]
+    P --> ADM[管理页面与 JSON 接口]
+    P --> DOC[公开 API 文档]
+    API --> SRC[src/ 业务运行时]
+    ADM --> SRC
+    DOC --> SRC
+    SRC --> DB[(PDO 数据库)]
+    SRC --> ST[(storage/ 运行数据)]
+    SRC --> IMG[(PC 与手机图库文件)]
+    SRC -. 可选 .-> REDIS[(Redis 图片索引缓存)]
+    SRC -. 邮件 .-> SMTP[SMTP 服务]
+```
+
+主要职责如下：
+
+- **入口与界面**：`index.php`、`public/` 和 `templates/admin/` 处理 URL、后台页面、公开文档及管理接口；后台交互由 `public/admin/assets/` 中的 JavaScript 和 CSS 完成。
+- **业务模块**：`src/public_api_runtime.php` 负责公开图片请求；`src/image_runtime.php` 管理图片索引、访问统计和日志；`src/media_management.php` 处理图库分类；`src/security_runtime.php`、`src/settings_runtime.php`、`src/setup_runtime.php` 等分别处理安全策略、站点配置和初始化。
+- **持久化与外部服务**：PDO 数据库存储管理员、配置文档、分类及运行记录；`storage/` 保存 SQLite 数据库、安装配置、会话、缓存、日志和上传暂存数据；图库图片保存在 `public/pc/img/` 与 `public/m/img/`。Redis 和 SMTP 分别用于可选缓存和邮件发送。
+
+增加功能时，通常在 `public/` 增加受控入口，在 `src/` 实现对应业务逻辑，并按数据性质选择数据库、`storage/` 或图库文件系统。当前运行时模块仍以 PHP 函数和 `require_once` 组合，部分业务编排与存储操作彼此耦合；若后续要扩展或多人并行维护，可以逐步抽出数据库、文件系统和缓存适配层，无需一次性重写现有 URL 与页面。
 
 ## 环境要求
 
-- PHP 8.1 或更高版本。
-- `PDO` 与所选数据库对应的 PDO 驱动，默认本地部署使用 `pdo_sqlite`。
-- PHP 进程必须可写入 `database/`、`pc/img/`、`m/img/`、`log/`、`pc/log/` 和 `m/log/`。
-- 生产环境建议启用 HTTPS，并将站点根目录指向本项目根目录。
+- PHP 8.1 或更高版本，启用 PDO、OpenSSL，以及所选数据库对应的 PDO 驱动。
+- 支持 SQLite、MySQL、PostgreSQL、SQL Server。SQLite 最便于单机使用。
+- PHP 进程需要写入 `storage/`，并需要对 `public/pc/img/`、`public/m/img/` 中的图库执行相应读写操作。
+- 首次初始化和开发者重置后，PHP 进程还需短暂写入项目根目录，以创建并删除 `setup.txt`。
+- GD 用于缩略图，Redis 用于可选缓存；未启用时使用文件缓存。
+- 正式网站应启用 HTTPS，并为 PHP 配置合适的上传大小和执行时间限制。
 
-## 服务器兼容性
+## 本机启动
 
-- 支持 Windows、Linux 与 macOS 上的 PHP 8.1+；项目内不调用操作系统 Shell 命令，文件路径通过 PHP 的目录分隔符处理。
-- 支持 Apache、Nginx、IIS、宝塔及常见共享主机。Apache 使用根目录 `.htaccess`；IIS 使用根目录 `web.config`；Nginx 请将站点根目录指向本项目根目录，并将 `index.php` 设为默认首页。
-- 无论运行在哪种服务器，均需让 Web 服务账户拥有上述运行目录的读写权限，并启用所选数据库的 PDO 驱动。SQLite 仅需 `pdo_sqlite`，无需安装数据库服务。
-- 受限主机启用 `open_basedir` 时，程序只使用项目内的运行目录；历史目录不在授权范围会被安全跳过，不会显示 PHP Warning。
+在项目根目录执行：
 
-本地快速运行：
-
-```powershell
-php -S 127.0.0.1:8000
+```sh
+php -S 127.0.0.1:8768 index.php
 ```
 
-### 反向代理
+然后打开：
 
-反向代理部署时，请将实际代理 IP 写入 `PICAPI_TRUSTED_PROXIES`（逗号分隔）。只有这些代理发出的 `X-Forwarded-*` 头才会被用于识别 HTTPS 与客户端 IP。
+- 后台：<http://127.0.0.1:8768/admin/>
+- 初始化：首次安装时会自动进入初始化向导，也可访问 <http://127.0.0.1:8768/admin/setup.php>
+- 公开文档：<http://127.0.0.1:8768/docs/>
+- 网站地图：<http://127.0.0.1:8768/sitemap.xml>
+- 图片接口：<http://127.0.0.1:8768/>
 
-随后访问 `http://127.0.0.1:8000/`。如果部署在子目录或反向代理之后，可设置环境变量 `PICAPI_BASE_URL` 为完整公开地址，使 JSON 与 URL 输出使用正确的域名。
+启动命令末尾的 `index.php` 是必要的路由器。仅运行 `php -S 127.0.0.1:8768` 会让 PHP 内置服务器直接按文件路径查找 `/docs/`，根目录没有 `docs` 文件夹时就会返回资源不存在。80 端口通常需要管理员权限，开发时建议使用 8768 等高位端口。PHP 内置服务器只适用于开发和本机测试，不适合作为生产 Web 服务器。
 
 ## 首次初始化
 
-1. 打开 `http://你的域名/admin/setup.php`。
-2. 选择数据库并测试连接。选择 SQLite 时，数据库会创建在 `database/picapi.sqlite`。
-3. 填写管理员用户名、邮箱与密码。密码至少 8 位，登录时可使用用户名或邮箱。
-4. 配置 SMTP，并通过测试邮件验证邮箱服务。
-5. 完成后自动登录后台；以后访问 `admin/` 会进入登录页面，不会重复进入初始化。
+1. 打开 `/admin/`，先从项目根目录的 `setup.txt` 复制本地验证码并填入向导，再填写数据库信息。输入后自动校验，验证成功会删除文件；该文件不通过网站路由提供。SQLite 无需填写账号信息，但所有数据库都要先通过连接测试。
+2. 如果启用 Redis，点击测试时系统会先测试数据库，再测试 Redis；测试未通过不能继续。
+3. 创建管理员账号。密码最少 8 位；请使用独立且强度足够的密码。
+4. 邮件服务可在初始化时配置，也可跳过后到系统设置中配置。未设置邮件时，依赖邮件的验证码、找回密码和通知功能无法使用。
+5. 完成向导后使用管理员账号登录。初始化草稿暂存在当前浏览器，并显示最近保存时间。
 
-不要把已初始化后的 `database/installation.php`、`database/picapi.sqlite`、安全记录和邮件配置提交到公开仓库或提供给他人。
+SQLite 数据库默认放在 `storage/database/`。数据库、安装配置、会话、密钥、日志和缓存都是本地运行数据，不应提交到代码仓库。登录凭证默认保存 7 天，可在系统设置中调整，最大 30 天。
 
-## 接口使用
+## 图片与 API 使用
 
-以下示例以 `https://example.com` 为站点地址。
+将图片放入对应图库分类目录，或登录后台使用上传功能：
 
-| 目标 | 直接图片 | JSON | 图片 URL |
-| --- | --- | --- | --- |
-| 自适应 | `https://example.com/` | `https://example.com/?type=json` | `https://example.com/?type=url` |
-| PC | `https://example.com/pc/` | `https://example.com/pc/?type=json` | `https://example.com/pc/?type=url` |
-| 手机 | `https://example.com/m/` | `https://example.com/m/?type=json` | `https://example.com/m/?type=url` |
+- PC 图片：`public/pc/img/<分类名>/`
+- 手机图片：`public/m/img/<分类名>/`
 
-接口只接受 `GET` 与 `HEAD`。默认或未知的 `type` 均按直接图片处理；是否允许直接图片、JSON 和 URL 输出可在后台 API 配置中分别开关。
-
-### 自适应规则
-
-- `?screen_width=768` 及以下返回手机图片，`769` 及以上返回 PC 图片。
-- 未传 `screen_width` 时通过 User-Agent 判断移动设备；未识别为移动设备时返回 PC 图片。
-- 根接口可使用 `?device=pc`、`?device=mobile` 或 `?device=m` 强制指定图片库。
-
-### 分类请求
-
-分类由显示名称和请求别名组成。显示名称可使用中文；别名使用英文、数字、下划线或连字符，例如 `wallpaper`、`anime_4k`。默认分类别名为 `default`。
+管理后台可创建和管理分类。默认图库是系统保留分类。生产环境更新代码前请备份图库和 `storage/` 中需要保留的配置数据。
 
 ```text
-# 返回指定分类的图片
-https://example.com/?type=wallpaper
-https://example.com/pc/?type=wallpaper
-https://example.com/m/?type=wallpaper
-
-# 指定分类并返回 JSON 或 URL
-https://example.com/?category=wallpaper&type=json
-https://example.com/pc/?category=wallpaper&type=url
-https://example.com/m/?category=wallpaper&type=json
+GET /                         自适应随机图片
+GET /pc/                      PC 随机图片
+GET /m/                       手机随机图片
+GET /?type=json               返回图片 JSON
+GET /?type=url                返回图片 URL
+GET /pc/?category=default     从指定分类取图
+GET /?device=mobile           本次请求指定使用手机图库
+GET /?screen_width=390        按屏幕宽度选择图库
 ```
 
-创建分类后，系统会自动建立 `pc/img/分类别名/` 与 `m/img/分类别名/`，并在各目录内创建分类入口。比如 `pc/img/wallpaper/` 固定返回 PC 分类图片，`m/img/wallpaper/` 固定返回手机分类图片。
+`type=json` 与 `type=url` 也可用于 `/pc/` 和 `/m/`。分类名称通过 `category` 参数指定；实际可用名称以后台分类管理中显示的接口名称为准。接口支持 GET 和 HEAD。限流、封禁、允许的响应类型等访问策略可在后台访问控制中设置。
 
-## 返回与状态码
+首次安装默认填入站点描述、页面标题、搜索摘要和关键词，可在后台“设置 → 站点信息”中修改。`/sitemap.xml` 默认列出公开接口文档页面，`/robots.txt` 会提供对应的网站地图地址；请在后台填写正式站点地址，以生成正确的绝对链接。
 
-- 直接图片：响应体为原图二进制内容，并使用原图片 MIME 类型。
-- `?type=url`：返回纯文本图片 URL。
-- `?type=json`：返回根据后台 JSON 模板生成的数据，默认包含图片 URL、文件大小、宽度与高度等信息。
-- `403`：当前输出方式被后台 API 配置关闭。
-- `405`：请求方法不是 `GET` 或 `HEAD`。
-- `429`：IP 被频率策略或管理员封禁；JSON 响应含中英文消息和解封信息。
-- `503`：当前请求范围内没有可用图片。
+## 部署到宝塔或其他 Web 服务器
 
-浏览器对 `/favicon.ico` 的自动请求会返回站点图标或空响应，不会被计入图片接口调用或接口统计。
+推荐使用 Nginx、Apache 或 IIS 配合 PHP-FPM/FastCGI，不要把 PHP 内置开发服务器作为公网服务。项目支持两种网站根目录部署方式：
 
-## 后台入口
+1. **项目根目录作为站点目录**：使用 `config/nginx-root.conf.example`，让请求经过根目录 `index.php`。这样 `/admin/`、`/docs/` 和图片接口都能正常转发，同时避免直接暴露源码目录。
+2. **`public/` 作为站点目录**：使用 `config/nginx.conf.example`，将站点根路径指向项目的 `public/`。Apache 和 IIS 可分别使用 `public/.htaccess` 和 `public/web.config`。
 
-| 地址 | 用途 |
-| --- | --- |
-| `/admin/login.php` | 登录、忘记密码与验证码重置 |
-| `/admin/dashboard.php` | 数据看板与实时统计 |
-| `/admin/upload.php` | 多文件、文件夹、拖放与分片上传 |
-| `/admin/media.php` | 图片资源、缩略图预览、批量操作与移动分类 |
-| `/admin/folders.php` | 分类显示名称与请求别名管理 |
-| `/admin/logs.php` | 访问流水、上传审计和日志导出 |
-| `/admin/custom_api.php` | 三个公开接口的输出策略和 JSON 模板 |
-| `/admin/ip_control.php` | 请求黑名单、登录黑名单与白名单 |
-| `/admin/settings.php` | 网站名称、图标、主题、SMTP、邮件模板、提醒策略与访问日志保留 |
+在宝塔中创建 PHP 站点后，按选定方式设置运行目录，配置 PHP 版本和数据库，再应用对应的 Nginx/Apache 规则。修改示例中的域名、项目绝对路径、PHP-FPM socket/端口、HTTPS 证书和上传限制。Nginx 不读取 `.htaccess`，必须在 Nginx 配置中加入示例的转发及目录保护规则。不要把站点根目录配置到 `storage/`、`src/` 或 `templates/`。
 
-公开 API 使用文档在 `/docs/`。其样式、字体、自定义 CSS、HTML 片段和 JavaScript 可以从后台 API 文档编辑入口管理。
+支持的服务器环境变量：
 
-文档中的访问统计会每 5 秒通过同页 `GET /docs/?stats=1` 自动更新；只刷新今日、昨日、总访问量及自适应 / PC / 手机接口统计，不会刷新整个页面或改变阅读位置。该统计请求不计入图片接口调用次数。
+- `PICAPI_BASE_URL`：配置系统使用的公开站点基址。
+- `PICAPI_TRUSTED_PROXIES`：逗号分隔的可信反向代理 IP。
 
-## 目录与运行数据
+环境变量由服务器或 PHP-FPM 提供；项目不会自动读取 `.env` 文件。
 
-```text
-pc/img/<分类别名>/                 PC 原图与分类入口
-m/img/<分类别名>/                  手机原图与分类入口
-database/thumbnails/pc/...         PC PNG 缩略图
-database/thumbnails/mobile/...     手机 PNG 缩略图
-database/chunks/                   未完成的分片上传临时文件
-database/picapi.sqlite             默认 SQLite 数据库与运行状态
-database/counters.json             请求计数兼容副本（主记录存入数据库状态表）
-database/categories.json           分类元数据的首次迁移来源
-database/api_config.json           API 输出与抽图策略
-database/api-docs.json             API 文档页面定制数据
-database/site-settings.json        站点与主题设置
-database/logs/YYYY/MM/DD.jsonl     结构化访问日志
-database/upload-logs/YYYY/MM/DD.jsonl 上传审计日志
-database/security/                 登录限流、IP 黑白名单与频率策略的兼容迁移来源
-log/                               自适应接口的本地请求计数与访问日志
-pc/log/                            PC 接口的本地请求计数与访问日志
-m/log/                             手机接口的本地请求计数与访问日志
-```
+## 维护与备份
 
-无论有多少图片分类，请求次数只按入口汇总为自适应、PC、手机三类。每次请求会写入数据库状态表，同时更新对应入口的本地 `count.log`、按日备份和访问日志；不会为每个分类额外创建计数文件。
+- 备份数据库（SQLite 文件或数据库服务器数据）、`public/pc/img/`、`public/m/img/`，以及需要保留的站点设置和安装配置。
+- 不要清理运行中的 `storage/`。日志和缓存可按维护策略清理；清除数据库或安装配置会导致站点数据丢失或重新进入安装流程。
+- `php bin/daily-summary.php` 可由计划任务定时运行；使用前在后台配置邮件服务、收件人和摘要开关。
 
-图片上传完成后会生成供后台资源管理使用的 PNG 缩略图。通过 SSH 等方式直接放入图片目录的原图，如果没有缩略图，在资源管理页发现时会请求生成并保存到 `database/thumbnails/`。
+## 开源协议
 
-## 安全与维护
-
-- 管理员会话在 7 天未登录后过期；持续登录会自动续期。
-- 登录失败会按次数逐步锁定来源 IP，可通过 SMTP 发送爆破提醒；达到最高锁定周期后继续失败会进入登录黑名单。
-- API 请求频率策略可自动封禁异常来源，白名单不受自动封禁影响。
-- 可在系统设置开启访问日志自动清理，并选择 1 个月至 5 年的保留周期；仅删除到期访问流水，不会删除总访问次数、每日计数或接口计数文件。
-- 可独立设置上传审计日志自动清理；清理仅移除到期审计记录，不会删除原图、缩略图或分类文件夹。
-- 反向代理部署时，只有在 `PICAPI_TRUSTED_PROXIES` 中配置了代理 IP，系统才会信任 `X-Forwarded-For`。
-- 定期备份 `database/`、`pc/img/`、`m/img/` 以及根目录、PC、手机目录下的 `log/` 文件夹。
-- 分类元数据、登录限流、IP 黑白名单、请求频率状态和顺序抽图游标会在数据库可用时自动迁移至 `picapi_runtime_states`；迁移后的 JSON 文件仅保留为兼容备份。
-- 升级或迁移前先备份运行数据；程序会尝试把旧版 `storage/` 和历史私有目录迁移到项目内的 `database/`。
-
-## Nginx 部署保护
-
-Nginx 不会读取 `.htaccess`。使用 Nginx、宝塔 Nginx 或反向代理部署时，必须把 [nginx-security.conf.example](docs/nginx-security.conf.example) 中的规则放入站点的 `server {}` 配置，以禁止公开访问数据库、日志和版本控制目录。
-
-## 开发检查
-
-修改 PHP 文件后可运行：
-
-```powershell
-php -l index.php
-php -l pc/index.php
-php -l m/index.php
-php -l admin/index.php
-```
-
-项目没有 Composer 依赖。使用外部 Web 服务器部署时，请保留 PHP 文件执行能力，并限制对敏感运行数据的非必要外部访问。
+PicAPI 项目代码采用 **GNU GPL-3.0-only**。分发本项目或其衍生版本时，须遵守 GPL-3.0，包括按该协议提供对应源代码。授权说明见根目录 `LICENSE`，完整协议文本见 [GNU GPL 第 3 版](https://www.gnu.org/licenses/gpl-3.0.html)。第三方组件按其各自附带的许可证授权，不因本项目协议而改变。

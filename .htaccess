@@ -1,28 +1,9 @@
 Options -Indexes
 DirectoryIndex index.php
 
-<IfModule mod_rewrite.c>
-    RewriteEngine On
-    RewriteRule ^api/v1/random/?$ index.php [L,QSA]
-    RewriteRule ^(?:\.(?:git|svn|hg)|(?:database|storage|log|m/log|pc/log))(?:/|$) - [F,L,NC]
-</IfModule>
-
-<FilesMatch "(?i)(?:^\.|\.(?:sqlite|sqlite3|db|jsonl|log|bak|lock|tmp)$)">
-    <IfModule mod_authz_core.c>
-        Require all denied
-    </IfModule>
-    <IfModule !mod_authz_core.c>
-        Deny from all
-    </IfModule>
-</FilesMatch>
-
-# Root-level HTML files are design-source artifacts, not public pages. They
-# contain mock administration screens and must not be served in production.
-<FilesMatch "^[1-4]\.html$">
-    <IfModule mod_authz_core.c>
-        Require all denied
-    </IfModule>
-    <IfModule !mod_authz_core.c>
-        Deny from all
-    </IfModule>
-</FilesMatch>
+# Root deployment: do not serve any root file or directory directly.
+# Requires mod_rewrite and AllowOverride FileInfo Options Indexes.
+RewriteEngine On
+RewriteRule ^setup\.txt$ - [F,L]
+RewriteRule ^index\.php$ - [L]
+RewriteRule ^ index.php [END,QSA]

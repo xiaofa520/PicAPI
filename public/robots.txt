@@ -1,0 +1,10 @@
+User-agent: *
+Disallow: /admin/
+Disallow: /database/
+Disallow: /storage/
+Disallow: /log/
+Disallow: /m/log/
+Disallow: /pc/log/
+
+# Public API documentation is intentionally indexable.
+Allow: /docs/

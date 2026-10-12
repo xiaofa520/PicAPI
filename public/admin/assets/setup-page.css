@@ -1,0 +1,89 @@
+/* Full-width installation layout, matching the approved workbench Demo. */
+.setup-install {background:var(--surface)}
+.setup-install .topbar {position:relative;inset:auto;display:flex;justify-content:space-between;height:52px;min-height:52px;padding:0 24px;background:var(--surface);flex-shrink:0}
+.setup-install .topbar .breadcrumb {position:absolute;left:50%;transform:translateX(-50%);margin:0;white-space:nowrap}
+.setup-install #setup-theme {margin-left:auto}
+.setup-install main.setup-shell {display:grid;grid-template-columns:clamp(240px,20vw,300px) minmax(0,1fr);gap:0;width:100%;max-width:none;height:calc(100dvh - 52px);min-height:0;margin:0;padding:0;align-items:stretch}
+.setup-install .setup-intro {padding:48px 24px;background:var(--sidebar);border-right:1px solid var(--line);overflow:auto}
+.setup-install .setup-brand {display:flex;margin:0 0 38px;font-size:25px}
+.setup-install .setup-intro h1 {font-size:28px;margin-bottom:16px}
+.setup-install .setup-intro>p {max-width:none;font-size:14px;margin-bottom:42px}
+.setup-install .setup-steps {display:grid;gap:28px;margin:0}
+.setup-install .setup-step {padding:8px 0;gap:14px}
+.setup-install .setup-step b {width:34px;height:34px;font-size:13px}
+.setup-install .setup-step span {font-size:15px}
+.setup-install .setup-step small {font-size:12px;margin-top:3px}
+.setup-install .setup-step:disabled {opacity:1;cursor:default}
+.setup-install main.setup-shell>.setup-content {width:100%;max-width:none;min-width:0;padding:48px clamp(24px,3vw,64px);overflow:auto;overscroll-behavior:contain}
+.setup-install .setup-card {width:100%;max-width:none;background:none;border:0;border-radius:0;box-shadow:none;overflow:visible}
+.setup-install .setup-card-head {padding:0 0 36px;border:0}
+.setup-install .setup-card-head h2 {font-size:28px;font-weight:650;margin-bottom:10px}
+.setup-install .setup-card-head p {font-size:14px;line-height:1.8}
+.setup-install .setup-card-head>span {font-size:12px}
+.setup-install .setup-form-body {padding:0}
+.setup-install .setup-field-title {font-size:14px;margin-bottom:14px}
+.setup-install .database-choices {display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:32px}
+.setup-install .database-choice {min-width:0;min-height:90px;padding:16px;display:grid;gap:12px;position:relative}
+.setup-install .database-choice input {position:absolute;right:14px;top:14px;min-height:0;width:16px;height:16px;margin:0;accent-color:var(--accent)}
+.setup-install .database-choice span {font-size:14px}
+.setup-install .database-choice:has(input:focus-visible) {outline:2px solid var(--accent);outline-offset:2px}
+.setup-install .setup-field-grid {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px}
+.setup-install .setup-field-grid .wide {grid-column:1/-1;min-width:0}
+.setup-install .setup-inline-fields {display:grid;grid-template-columns:minmax(0,1fr) 120px;gap:16px}
+.setup-install .field {min-width:0;margin:0}
+.setup-install .field label {font-size:14px;font-weight:400}
+.setup-install .field input,.setup-install .field select {width:100%;min-width:0;min-height:46px;font-size:15px;background:var(--surface-alt)}
+.setup-install .setup-code-block {max-width:520px;margin-top:22px}
+.setup-install .setup-code-block .field {gap:7px}
+.setup-install .setup-code-block>small {display:block;margin-top:8px;color:var(--muted);font-size:12px;line-height:1.7}
+.setup-install .setup-code-block>small[data-state="pending"] {color:var(--accent)}
+.setup-install .setup-code-block>small[data-state="error"] {color:var(--danger,#c0392b)}
+.setup-install .setup-code-block>small[data-state="verified"] {color:var(--green,#16856c)}
+.setup-install .setup-password-error {display:block;margin-top:7px;color:var(--danger,#c0392b);font-size:12px;line-height:1.5}
+.setup-install .setup-password-error[hidden] {display:none}
+.setup-install .setup-password-control {position:relative;min-width:0}
+.setup-install .setup-password-control input {padding-right:48px}
+.setup-install .setup-password-toggle {position:absolute;inset-block:0;right:8px;display:grid;place-items:center;width:34px;height:34px;min-height:0;margin-block:auto;padding:0;transform:none;border:0;border-radius:7px;background:transparent;color:var(--muted);line-height:1}
+.setup-install .setup-password-toggle:hover {background:var(--surface);color:var(--ink)}
+.setup-install .setup-password-toggle:focus-visible {outline:2px solid var(--accent);outline-offset:1px}
+.setup-install .setup-password-toggle svg {width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.setup-install input:focus-visible,.setup-install select:focus-visible {outline:2px solid var(--accent);outline-offset:-2px}
+.setup-install .setup-optional {margin-top:28px;padding-top:24px;border-top:1px solid var(--line)}
+.setup-install .setup-optional summary {font-size:14px}
+.setup-install .setup-optional>.field {margin-top:24px}
+.setup-install .setup-check {margin:20px 0}
+.setup-install .setup-status:empty {display:none}
+.setup-install .setup-status {margin-top:22px;overflow-wrap:anywhere}
+.setup-install .setup-server-error {margin-bottom:24px}
+.setup-install .setup-footer {display:flex;align-items:center;justify-content:space-between;gap:12px;padding:24px 0 0;margin-top:36px;border-top:1px solid var(--line)}
+.setup-install .setup-footer>div {display:flex;gap:12px;margin-left:auto}
+.setup-install .setup-footer .button {min-height:44px;font-size:14px;padding:10px 18px}
+.setup-install [hidden] {display:none!important}
+@media(max-width:760px){
+  .setup-install main.setup-shell {display:block;height:auto;min-height:calc(100dvh - 52px)}
+  .setup-install .topbar {padding:0 20px}
+  .setup-install .setup-intro {padding:24px 20px;border-right:0;border-bottom:1px solid var(--line);overflow:visible}
+  .setup-install .setup-brand {display:none}
+  .setup-install .setup-intro h1 {font-size:24px;margin-bottom:6px}
+  .setup-install .setup-intro>p {font-size:12px;margin-bottom:22px}
+  .setup-install .setup-steps {grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+  .setup-install .setup-step {flex-direction:column;align-items:flex-start;gap:6px;padding:0}
+  .setup-install .setup-step b {width:28px;height:28px;font-size:11px}
+  .setup-install .setup-step span {font-size:12px;white-space:nowrap}
+  .setup-install .setup-step small {display:none}
+  .setup-install main.setup-shell>.setup-content {padding:28px 20px;overflow:visible}
+  .setup-install .setup-card-head {padding-bottom:26px;gap:12px}
+  .setup-install .setup-card-head h2 {font-size:23px}
+  .setup-install .setup-card-head p {font-size:13px}
+  .setup-install .database-choices {grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-bottom:24px}
+  .setup-install .database-choice {min-height:86px;padding:14px}
+  .setup-install .setup-field-grid {grid-template-columns:minmax(0,1fr);gap:20px}
+  .setup-install .setup-inline-fields {grid-template-columns:minmax(0,1fr) 88px;gap:12px}
+  .setup-install .field input,.setup-install .field select {font-size:16px}
+  .setup-install .setup-footer {gap:8px;margin-top:28px}
+  .setup-install .setup-footer>div {gap:8px}
+  .setup-install .setup-footer .button {padding:10px 12px;font-size:13px}
+}
+@media(prefers-reduced-motion:no-preference){.setup-install section[data-step]:not([hidden]){animation:setup-enter 160ms ease-out}@keyframes setup-enter{from{opacity:.5;transform:translateY(4px)}to{opacity:1;transform:none}}}
+
+.setup-draft-notice{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:20px;color:var(--muted);font-size:13px}.setup-draft-notice.expired{color:var(--danger,#c0392b)}

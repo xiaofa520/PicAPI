@@ -1,0 +1,59 @@
+.log-status{display:inline-flex;align-items:center;justify-content:center;min-width:76px;padding:4px 9px;border:1px solid transparent;border-radius:999px;font-size:11px;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
+.log-status-success{color:var(--green);background:var(--green-soft)}
+.log-status-redirect{color:var(--accent);background:var(--accent-soft)}
+.log-status-limited{color:#8a6415;background:#fff4d6}
+.log-status-client-error,.log-status-server-error{color:var(--danger);background:var(--danger-soft)}
+.log-status-unknown{color:var(--muted);background:var(--surface-alt)}
+[data-theme="dark"] .log-status-limited{color:#f0cf7e;background:#473b24}
+.log-date-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:12px 18px;margin:0 0 18px;padding:13px 16px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.log-date-fields{display:flex;align-items:center;flex-wrap:wrap;gap:8px;color:var(--muted);font-size:11px}
+.log-date-fields input{width:150px;min-height:37px;padding:7px 9px;border:1px solid var(--line);border-radius:7px;background:var(--surface);color:var(--ink);font:inherit;font-variant-numeric:tabular-nums}
+.log-date-fields input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.log-date-toolbar>.actions{display:flex;gap:8px;margin-left:auto}
+.log-date-toolbar>.actions .button{min-height:36px;padding:7px 12px;font-size:11px}
+.log-date-note{color:var(--muted);font-size:10px}
+.log-date-toolbar>.button{min-height:38px}
+.log-date-current{font-size:11px;font-variant-numeric:tabular-nums;color:var(--ink)}
+.log-calendar-body{display:block}
+.log-calendar{width:min(100%,440px);margin:0 auto}
+.log-calendar-head{display:grid;grid-template-columns:38px 1fr 38px;align-items:center;gap:12px;margin-bottom:16px;text-align:center}
+.log-calendar-head strong{font-size:14px}
+.log-calendar-head .icon-button{width:36px;height:36px}
+.log-calendar-head .icon-button .icon{width:15px;height:15px}
+.log-calendar-head>.icon-button:first-child .icon{transform:rotate(180deg)}
+.log-calendar-legend{display:flex;justify-content:center;gap:20px;margin-bottom:13px;color:var(--muted);font-size:10px}
+.log-calendar-legend span{display:inline-flex;align-items:center;gap:6px}
+.log-calendar-legend i,.log-calendar-day i{display:inline-block;width:7px;height:7px;border-radius:50%}
+.log-calendar-legend .has-logs,.log-calendar-day.has-logs i{background:var(--accent)}
+.log-calendar-legend .no-logs{background:var(--muted)}
+.log-calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;text-align:center}
+.log-calendar-weekday{display:grid;place-items:center;height:30px;color:var(--muted);font-size:10px}
+.log-calendar-day{position:relative;display:grid;place-items:center;gap:2px;min-width:0;min-height:43px;padding:4px 2px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--muted);font:inherit;font-size:12px;font-variant-numeric:tabular-nums;cursor:pointer;transition:background .14s,border-color .14s,color .14s}
+.log-calendar-day.has-logs{color:var(--accent);font-weight:650}
+.log-calendar-day.no-logs{color:var(--muted);opacity:.6}
+.log-calendar-day.outside-month{opacity:.28}
+.log-calendar-day:hover{border-color:var(--line);background:var(--surface-alt);opacity:1}
+.log-calendar-day.in-range{border-radius:0;background:var(--accent-soft);color:var(--ink);opacity:1}
+.log-calendar-day.range-start,.log-calendar-day.range-end{border-color:var(--accent);background:var(--accent);color:#fff;opacity:1}
+.log-calendar-day i{width:5px;height:5px}
+.log-calendar-prompt{min-height:20px;margin:16px 0 0;color:var(--muted);font-size:11px;text-align:center;font-variant-numeric:tabular-nums}
+.log-export-body{gap:16px}
+.log-export-formats{display:grid;gap:8px;margin:0;padding:0;border:0}
+.log-export-formats legend{margin-bottom:8px;color:var(--ink);font-size:12px;font-weight:600}
+.log-export-formats label{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;cursor:pointer}
+.log-export-formats label:has(input:checked){border-color:var(--accent);background:var(--accent-soft)}
+.log-export-formats input{accent-color:var(--accent)}
+.log-export-formats label span{display:grid;gap:2px}
+.log-export-formats strong{font-size:11px;color:var(--ink)}
+.log-export-formats small,.log-export-filename{font-size:10px;color:var(--muted)}
+.log-export-filename{margin:0}
+.log-export-filename strong{color:var(--ink)}
+@media(max-width:760px){.log-date-toolbar{align-items:center}.log-date-current{flex:1;min-width:130px}.log-date-note{width:100%}.log-calendar-grid{gap:2px}.log-calendar-day{min-height:40px}}
+.log-calendar-anchor,.login-log-calendar-control{position:relative;z-index:5}
+.log-calendar-popover{position:absolute;z-index:80;top:calc(100% + 8px);left:0;width:min(420px,calc(100vw - 32px));max-height:calc(100dvh - 32px);overflow:auto;padding:14px;border:1px solid var(--line);border-radius:12px;background:var(--surface);color:var(--ink);box-shadow:0 14px 38px #0003}
+.log-calendar-popover[hidden]{display:none!important}
+.log-calendar-popover .log-calendar{width:100%;max-width:390px}
+.log-calendar-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:12px;padding-top:10px;border-top:1px solid var(--line)}
+.log-calendar-actions .button,.log-calendar-actions .text-button{min-height:34px;padding:6px 10px;font-size:11px}
+.login-log-calendar-control .login-log-calendar-popover{left:auto;right:0}
+@media(max-width:760px){.log-calendar-popover{width:min(390px,calc(100vw - 24px));padding:11px}.login-log-calendar-control .login-log-calendar-popover{left:0;right:auto}.log-calendar-day{min-height:38px}}

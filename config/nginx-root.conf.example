@@ -1,0 +1,18 @@
+# Root-directory deployment. All public URLs are resolved by index.php.
+server {
+    listen 80;
+    server_name example.com;
+    root /var/www/picapi;
+    index index.php;
+    autoindex off;
+    client_max_body_size 55m;
+
+    location = /setup.txt { return 404; }
+    location / { rewrite ^ /index.php last; }
+    location = /index.php {
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME $document_root/index.php;
+        # Replace with your PHP-FPM socket or address.
+        fastcgi_pass unix:/run/php/php-fpm.sock;
+    }
+}

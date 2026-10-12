@@ -1,0 +1,19 @@
+Options -Indexes
+DirectoryIndex index.php
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteRule ^(?:api/v1/random/?|favicon\.ico)$ index.php [L,QSA]
+    RewriteRule ^robots\.txt$ robots.php [L]
+    RewriteRule ^sitemap\.xml$ sitemap.php [L]
+    RewriteRule ^(?:\.(?:git|svn|hg)|(?:database|storage|log|m/log|pc/log|src|templates|config|tests|bin|demos))(?:/|$) - [F,L,NC]
+</IfModule>
+
+<FilesMatch "(?i)(?:^\.|\.(?:sqlite|sqlite3|db|jsonl|log|bak|lock|tmp)$)">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Deny from all
+    </IfModule>
+</FilesMatch>
