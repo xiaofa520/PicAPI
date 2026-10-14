@@ -1,5 +1,7 @@
 'use strict';
 const form=document.querySelector('#setup-form'),sections=[...form.querySelectorAll('section[data-step]')],feedback=document.querySelector('#setup-feedback');
+function setupRequestURL(path){const page=new URL(location.href),target=new URL(path,page);if(target.host.toLowerCase()===page.host.toLowerCase())target.protocol=page.protocol;return target.href;}
+form.action=setupRequestURL(location.href);
 let step=Number(form.dataset.step)||1,busy=false;
 const databaseFieldsToTest=['db_type','db_host','db_port','db_name','db_username','db_password'],redisFields=['redis_enabled','redis_host','redis_password'],connectionFields=[...databaseFieldsToTest,...redisFields];
 let testedConnection=null,testedAt=0;
@@ -86,7 +88,7 @@ async function verifySetupCode(){
   setupCodeStatus.dataset.state='pending';setupCodeStatus.textContent='正在校验验证码…';
   const body=new FormData();body.set('csrf',form.elements.csrf.value);body.set('setup_draft_token',draftToken);body.set('setup_code',code);
   try{
-    const response=await fetch('setup_verify_code.php',{method:'POST',body,headers:{Accept:'application/json'},credentials:'same-origin',signal:setupCodeController.signal});
+    const response=await fetch(setupRequestURL('setup_verify_code.php'),{method:'POST',body,headers:{Accept:'application/json'},credentials:'same-origin',signal:setupCodeController.signal});
     const data=await response.json();if(requestId!==setupCodeRequest)return;refreshSetupBindings(data);
     if(response.status===419){expireDraft();return;}
     if(data.setupCodeVerified){form.dataset.codeVerified='1';markSetupCodeVerified();return;}
@@ -146,7 +148,7 @@ document.querySelector('#setup-back').onclick=()=>goToStep(step-1);
 document.querySelectorAll('[data-go-step]').forEach(button=>button.addEventListener('click',()=>goToStep(Number(button.dataset.goStep))));
 form.elements.redis_enabled.addEventListener('change',databaseFields);
 form.elements.db_type.forEach(input=>input.addEventListener('change',()=>{const port={mysql:3306,pgsql:5432,sqlserver:1433}[input.value];if(port)form.elements.db_port.value=port;databaseFields()}));
-async function requestSetupTest(url,body){const response=await fetch(url,{method:'POST',body,headers:{Accept:'application/json'},credentials:'same-origin'});if(!response.headers.get('content-type')?.includes('application/json'))throw new Error('验证失败，请刷新页面后重试。');const data=await response.json();refreshSetupBindings(data);if(data.setupCodeVerified)markSetupCodeVerified();if(response.status===419){expireDraft();throw new Error(data.message);}if(!draftCurrent())throw new Error('初始化会话已失效，请重新开始。');if(!response.ok||!data.ok)throw new Error(data.message||'连接测试失败');return data;}
+async function requestSetupTest(url,body){const response=await fetch(setupRequestURL(url),{method:'POST',body,headers:{Accept:'application/json'},credentials:'same-origin'});if(!response.headers.get('content-type')?.includes('application/json'))throw new Error('验证失败，请刷新页面后重试。');const data=await response.json();refreshSetupBindings(data);if(data.setupCodeVerified)markSetupCodeVerified();if(response.status===419){expireDraft();throw new Error(data.message);}if(!draftCurrent())throw new Error('初始化会话已失效，请重新开始。');if(!response.ok||!data.ok)throw new Error(data.message||'连接测试失败');return data;}
 async function runDatabaseConnectionTest(){
   const snapshot=connectionSnapshot(),body=new FormData(),current=new FormData(form);
   databaseFieldsToTest.forEach(name=>{if(current.has(name))body.set(name,current.get(name));});

@@ -10,7 +10,8 @@ async function installLatestPicApi(){
     const body=new FormData();
     body.set('csrf',document.body.dataset.csrf||'');
     body.set('payload','{}');
-    const response=await fetch('workbench_api.php?op=update-install',{method:'POST',credentials:'same-origin',headers:{Accept:'application/json'},body,cache:'no-store'});
+    const endpoint=new URL('workbench_api.php?op=update-install',location.href);endpoint.protocol=location.protocol;
+    const response=await fetch(endpoint.href,{method:'POST',credentials:'same-origin',headers:{Accept:'application/json'},body,cache:'no-store'});
     const type=response.headers.get('content-type')||'';
     if(!type.includes('application/json'))throw new Error(response.status===403?'登录验证已失效，请返回后台重新登录。':'服务器未返回有效的更新结果。');
     const data=await response.json();

@@ -5,6 +5,9 @@
     const digestAlgo = <?= json_encode(login_transport_digest_algo(), JSON_UNESCAPED_SLASHES) ?>;
     const form = Array.from(document.forms).find(item => item.querySelector('input[name="action"][value="login"]'));
     if (!form) return;
+    const currentPage = new URL(location.href);
+    currentPage.hash = '';
+    form.action = currentPage.href;
     const username = form.querySelector('input[name="username"]');
     const password = form.querySelector('input[name="password"]');
     const submitButton = form.querySelector('button[type="submit"]');
@@ -25,11 +28,14 @@
     };
     form.addEventListener('submit', async event => {
         if (form.dataset.encrypted === 'true') return;
-        event.preventDefault();
         if (!window.crypto?.subtle) {
-            alert('当前浏览器不支持登录凭据加密，请使用现代浏览器后重试。');
+            // Leave the native form submission in place. With no explicit
+            // action URL, the browser posts to this same URL and follows the
+            // scheme used to open the login page (HTTP or HTTPS).
+            form.dataset.encrypted = 'true';
             return;
         }
+        event.preventDefault();
         submitButton.disabled = true;
         try {
             const rsaKey = await crypto.subtle.importKey('spki', publicKeyBytes(), { name: 'RSA-OAEP', hash: digestAlgo === 'sha256' ? 'SHA-256' : 'SHA-1' }, false, ['encrypt']);

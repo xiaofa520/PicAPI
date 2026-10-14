@@ -9,7 +9,9 @@ function apiDesignDirty(){
     || Number(apiBreakpoint)!==Number(serverData.settings.adaptive_breakpoint);
 }
 function apiDesignAddress(){
-  const base=(serverData.baseURL||location.origin).replace(/\/?$/,'/');
+  const baseURL=new URL(serverData.baseURL||location.origin,location.href);
+  if(baseURL.host.toLowerCase()===location.host.toLowerCase())baseURL.protocol=location.protocol;
+  const base=baseURL.href.replace(/\/?$/,'/');
   const url=new URL(apiDesignChannels[state.apiDevice].path.replace(/^\//,''),base);
   if(apiProbe.output!=='image')url.searchParams.set('type',apiProbe.output);
   if(state.apiDevice==='auto')url.searchParams.set('screen_width',String(apiProbe.width));

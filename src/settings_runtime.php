@@ -593,8 +593,15 @@ function site_favicon_url(): string
     $custom = site_icon_path();
     $version = $custom ?? PUBLIC_DIR . '/admin/assets/mark.svg';
     $query = is_file($version) ? '?v=' . substr(hash_file('sha256', $version), 0, 16) . ($custom !== null ? '&custom=1' : '') : '';
-    $base = rtrim(application_base_url(), '/');
-    return ($base !== '' ? $base : '..') . '/favicon.ico' . $query;
+    // Keep this URL on the origin that served the current page. In a reverse
+    // proxy deployment PHP may see the upstream HTTP connection even when the
+    // browser-facing page is HTTPS, which makes an absolute URL violate CSP.
+    $base = application_base_url();
+    $basePath = $base !== '' ? parse_url($base, PHP_URL_PATH) : null;
+    $prefix = $base === ''
+        ? '../'
+        : (is_string($basePath) && rtrim($basePath, '/') !== '' ? rtrim($basePath, '/') . '/' : '/');
+    return $prefix . 'favicon.ico' . $query;
 }
 
 function output_site_favicon(): bool

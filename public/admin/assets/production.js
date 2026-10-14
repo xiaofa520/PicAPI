@@ -20,8 +20,9 @@ const baseGeneralSettings=generalSettingsMarkup;
 const baseChangeTheme=changeTheme;
 let pendingAvatar=null;
 
+function adminRequestURL(path){const page=new URL(location.href),target=new URL(path,page);if(target.host.toLowerCase()===page.host.toLowerCase())target.protocol=page.protocol;return target.href;}
 async function requestJSON(url,body=null,options={}){
-  const response=await fetch(url,{method:body?'POST':'GET',credentials:'same-origin',headers:{Accept:'application/json'},body,signal:options.signal});
+  const response=await fetch(adminRequestURL(url),{method:body?'POST':'GET',credentials:'same-origin',headers:{Accept:'application/json'},body,signal:options.signal});
   if(response.redirected&&/login\.php/.test(response.url)){location.href='login.php';throw new Error('登录已过期');}
   const type=response.headers.get('content-type')||'';
   if(!type.includes('application/json'))throw new Error(response.status===403?'验证已失效，请刷新后重试':'服务器未返回有效数据');
@@ -530,7 +531,7 @@ Object.assign(actions,{
   'check-updates':()=>checkPicApiUpdates(document.querySelector('[data-action="check-updates"]')),
   'developer-diagnostics':()=>perform(async()=>{const response=await apiRequest('developer-diagnostics',{});developerDiagnostics=response.result||[];render();},document.querySelector('[data-action="developer-diagnostics"]')),
   'developer-rebuild-index':()=>perform(async()=>{const response=await apiRequest('developer-rebuild-index',{});await refreshLibrary();render();toast(`图库索引已重建：${Number(response.result?.images||0)} 张图片`);},document.querySelector('[data-action="developer-rebuild-index"]')),
-  logout:()=>{announceLiveMutation('changed',0);const form=document.createElement('form');form.method='POST';form.action='logout.php';const input=document.createElement('input');input.name='csrf';input.value=csrf;form.append(input);document.body.append(form);form.submit();}
+  logout:()=>{announceLiveMutation('changed',0);const form=document.createElement('form');form.method='POST';form.action=adminRequestURL('logout.php');const input=document.createElement('input');input.name='csrf';input.value=csrf;form.append(input);document.body.append(form);form.submit();}
 });
 
 document.addEventListener('click',event=>{
