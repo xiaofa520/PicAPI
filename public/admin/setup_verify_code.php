@@ -29,19 +29,25 @@ verify_csrf();
 try {
     require_setup_draft($_POST);
     require_setup_code($_POST);
+    $binding = setup_browser_binding_payload((string) ($_POST['setup_draft_token'] ?? ''));
     echo json_encode([
         'ok' => true,
         'setupCodeVerified' => setup_code_is_verified(),
-        'message' => '验证码正确，已自动验证并删除验证码文件。',
+        'message' => '验证码正确，已验证此浏览器；完成初始化后会自动移除验证码文件。',
+        'csrf' => $binding['csrf'],
+        'setupDraftToken' => $binding['setupDraftToken'],
     ], JSON_UNESCAPED_UNICODE);
 } catch (SetupDraftExpiredException $exception) {
     http_response_code(419);
-    echo json_encode(['ok' => false, 'setupCodeVerified' => setup_code_is_verified(), 'message' => $exception->getMessage()], JSON_UNESCAPED_UNICODE);
+    $binding = setup_browser_binding_payload((string) ($_POST['setup_draft_token'] ?? ''));
+    echo json_encode(['ok' => false, 'setupCodeVerified' => setup_code_is_verified(), 'message' => $exception->getMessage(), 'csrf' => $binding['csrf'], 'setupDraftToken' => $binding['setupDraftToken']], JSON_UNESCAPED_UNICODE);
 } catch (InvalidArgumentException $exception) {
     http_response_code(422);
-    echo json_encode(['ok' => false, 'setupCodeVerified' => setup_code_is_verified(), 'message' => $exception->getMessage()], JSON_UNESCAPED_UNICODE);
+    $binding = setup_browser_binding_payload((string) ($_POST['setup_draft_token'] ?? ''));
+    echo json_encode(['ok' => false, 'setupCodeVerified' => setup_code_is_verified(), 'message' => $exception->getMessage(), 'csrf' => $binding['csrf'], 'setupDraftToken' => $binding['setupDraftToken']], JSON_UNESCAPED_UNICODE);
 } catch (Throwable $exception) {
     http_response_code(500);
     error_log('Setup code verification failed: ' . $exception->getMessage());
-    echo json_encode(['ok' => false, 'setupCodeVerified' => setup_code_is_verified(), 'message' => '验证码校验暂时无法完成，请检查项目目录权限后重试。'], JSON_UNESCAPED_UNICODE);
+    $binding = setup_browser_binding_payload((string) ($_POST['setup_draft_token'] ?? ''));
+    echo json_encode(['ok' => false, 'setupCodeVerified' => setup_code_is_verified(), 'message' => '验证码校验暂时无法完成，请检查项目目录权限后重试。', 'csrf' => $binding['csrf'], 'setupDraftToken' => $binding['setupDraftToken']], JSON_UNESCAPED_UNICODE);
 }

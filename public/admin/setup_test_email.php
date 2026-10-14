@@ -13,15 +13,18 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') abort_request(405, '请求方
 verify_csrf();
 header('Content-Type: application/json; charset=utf-8');
 try {
-    require_setup_code_verified();
     require_setup_draft($_POST);
+    require_setup_code_verified();
     if (!smtp_is_configured($_POST)) throw new RuntimeException('请先填写 SMTP 配置。');
     smtp_test_message($_POST, trim((string) ($_POST['admin_email'] ?? '')));
     require_setup_draft($_POST);
-    echo json_encode(['ok' => true, 'message' => '测试邮件已发送至管理员邮箱。', 'setupCodeVerified' => setup_code_is_verified()], JSON_UNESCAPED_UNICODE);
+    $binding = setup_browser_binding_payload((string) ($_POST['setup_draft_token'] ?? ''));
+    echo json_encode(['ok' => true, 'message' => '测试邮件已发送至管理员邮箱。', 'setupCodeVerified' => setup_code_is_verified(), 'csrf' => $binding['csrf'], 'setupDraftToken' => $binding['setupDraftToken']], JSON_UNESCAPED_UNICODE);
 } catch (SetupDraftExpiredException $exception) {
     http_response_code(419);
-    echo json_encode(['ok' => false, 'message' => $exception->getMessage(), 'setupCodeVerified' => setup_code_is_verified()], JSON_UNESCAPED_UNICODE);
+    $binding = setup_browser_binding_payload((string) ($_POST['setup_draft_token'] ?? ''));
+    echo json_encode(['ok' => false, 'message' => $exception->getMessage(), 'setupCodeVerified' => setup_code_is_verified(), 'csrf' => $binding['csrf'], 'setupDraftToken' => $binding['setupDraftToken']], JSON_UNESCAPED_UNICODE);
 } catch (Throwable $exception) {
-    echo json_encode(['ok' => false, 'message' => '邮箱验证失败，请检查 SMTP 地址、端口、账号、授权密码和加密方式。', 'setupCodeVerified' => setup_code_is_verified()], JSON_UNESCAPED_UNICODE);
+    $binding = setup_browser_binding_payload((string) ($_POST['setup_draft_token'] ?? ''));
+    echo json_encode(['ok' => false, 'message' => '邮箱验证失败，请检查 SMTP 地址、端口、账号、授权密码和加密方式。', 'setupCodeVerified' => setup_code_is_verified(), 'csrf' => $binding['csrf'], 'setupDraftToken' => $binding['setupDraftToken']], JSON_UNESCAPED_UNICODE);
 }

@@ -63,6 +63,13 @@ if ($publicRoot === false
     $notFound();
 }
 
+// Category index.php files are intentional API endpoints under img/. All
+// other scripts in public image folders are rejected, even if copied there
+// outside the authenticated image upload flow.
+if (preg_match('~^/(?:pc|m)/img/(?![a-z0-9][a-z0-9_-]{0,48}/index\.php$).+\.php$~i', $requestPath) === 1) {
+    $notFound();
+}
+
 if ($isAlias) $requestPath = $publicAliases[$requestPath];
 $targetPath = realpath($publicRoot . $requestPath);
 if ($targetPath === false || !str_starts_with($targetPath, $publicRoot . DIRECTORY_SEPARATOR)) $notFound();

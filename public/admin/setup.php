@@ -24,7 +24,9 @@ if (!$setupCodeVerified) {
     catch (Throwable $exception) { $setupCodeError = $exception->getMessage(); }
 }
 
-$draftWindow = ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' ? ($_SESSION['setup_draft_window'] ?? []) : setup_draft_window();
+$draftWindow = ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST'
+    ? setup_draft_window((string) ($_POST['setup_draft_token'] ?? ''))
+    : setup_draft_window();
 $error = $setupCodeError;
 $errorStep = 1;
 $errorFocus = 'db_host';
@@ -72,6 +74,9 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         ]);
         $setupCodePath = setup_code_path();
         if (is_file($setupCodePath) && !is_link($setupCodePath)) @unlink($setupCodePath);
+        clear_setup_code_verified_cookie();
+        clear_setup_connection_test_cookie('database');
+        clear_setup_connection_test_cookie('redis');
         unset($_SESSION['setup_code_verified'], $_SESSION['setup_draft_window'], $_SESSION['setup_connection_tests']);
         begin_admin_session($username);
         redirect('dashboard.php');
@@ -83,7 +88,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         $draftWindow = [];
     } catch (Throwable $exception) {
         // Never echo raw SMTP connection details (host/port) back to visitors.
-        $error = $errorStep === 3 ? 'SMTP 邮件服务连接失败，请检查服务器地址、端口、账号、授权密码与加密方式。' : $exception->getMessage();
+        $error = $errorStep === 3 ? '邮件配置不完整，请检查服务器地址、端口、账号、授权密码与加密方式。' : $exception->getMessage();
     }
 }
 

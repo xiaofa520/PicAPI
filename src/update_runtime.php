@@ -44,7 +44,7 @@ function picapi_update_latest_release(): array
     }
 
     $tags = picapi_update_github_json($base . '/tags?per_page=100');
-    if (!array_is_list($tags)) throw new PicApiUpdateException('无法读取 GitHub 版本标签。');
+    if (!picapi_update_is_list($tags)) throw new PicApiUpdateException('无法读取 GitHub 版本标签。');
     $candidates = [];
     foreach ($tags as $tag) {
         if (!is_array($tag)) continue;
@@ -55,6 +55,16 @@ function picapi_update_latest_release(): array
     usort($candidates, static fn(array $left, array $right): int => version_compare(ltrim($right['version'], 'vV'), ltrim($left['version'], 'vV')));
     if ($candidates === []) throw new PicApiUpdateException('仓库还没有可用的正式版本。');
     return $candidates[0];
+}
+
+/** Keep the updater compatible with PHP 8.0, which does not provide array_is_list(). */
+function picapi_update_is_list(array $value): bool
+{
+    $expectedKey = 0;
+    foreach ($value as $key => $_) {
+        if ($key !== $expectedKey++) return false;
+    }
+    return true;
 }
 
 /** @return array<string,mixed> */

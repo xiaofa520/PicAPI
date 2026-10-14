@@ -7,30 +7,118 @@ const SETUP_CONNECTION_TEST_TTL_SECONDS = 300;
 
 class SetupDraftExpiredException extends InvalidArgumentException {}
 
-// The session nonce binds setup requests to one browser session. Drafts do not
-// expire on an arbitrary timer; the timestamp is kept in browser sessionStorage.
-function setup_draft_window(): array
+function setup_signed_token(string $purpose, string $nonce): ?string
 {
-    $window = $_SESSION['setup_draft_window'] ?? [];
-    if (!is_string($window['token'] ?? null) || strlen($window['token']) !== 64) {
-        $window = ['token' => bin2hex(random_bytes(32)), 'created_at' => time()];
-        $_SESSION['setup_draft_window'] = $window;
-        unset($_SESSION['setup_connection_tests']);
-    } elseif (!isset($window['created_at']) || isset($window['expires_at'])) {
-        $window = ['token' => $window['token'], 'created_at' => (int) ($window['created_at'] ?? time())];
-        $_SESSION['setup_draft_window'] = $window;
+    $key = setup_local_signing_key();
+    if ($key === null) return null;
+    $domain = request_domain_binding() . ':';
+    return $nonce . '.' . hash_hmac('sha256', 'setup:' . $purpose . ':' . $domain . $nonce, $key);
+}
+
+function setup_signed_token_is_valid(string $purpose, string $token): bool
+{
+    if (preg_match('/^([a-f0-9]{64})\.([a-f0-9]{64})$/D', $token, $matches) !== 1) return false;
+    $expected = setup_signed_token($purpose, $matches[1]);
+    return $expected !== null && hash_equals($expected, $token);
+}
+
+function setup_draft_legacy_nonce(string $token): ?string
+{
+    if (preg_match('/^([a-f0-9]{64})\.([a-f0-9]{64})$/D', $token, $matches) !== 1) return null;
+    $key = setup_local_signing_key();
+    if ($key === null) return null;
+    $nonce = $matches[1];
+    $legacySignatures = [
+        hash_hmac('sha256', 'setup:setup-draft::' . $nonce, $key),
+        hash_hmac('sha256', 'setup:setup-draft:unknown:' . $nonce, $key),
+        hash_hmac('sha256', 'setup-draft:' . $nonce, $key),
+    ];
+    $legacyDomains = [request_domain_binding(), (string) ($_SESSION['setup_draft_window']['domain'] ?? '')];
+    // Older builds could bind drafts to PICAPI_BASE_URL. Accept that value
+    // only for migration; the replacement token is always signed to this request.
+    $configuredAuthority = normalize_request_authority((string) (getenv('PICAPI_BASE_URL') ?: ''));
+    if ($configuredAuthority !== null) $legacyDomains[] = $configuredAuthority;
+    foreach (['HTTP_HOST', 'HTTP_X_FORWARDED_HOST', 'HTTP_X_ORIGINAL_HOST'] as $header) {
+        $domain = normalize_request_authority(explode(',', (string) ($_SERVER[$header] ?? ''))[0]);
+        if ($domain !== null) $legacyDomains[] = $domain;
     }
+    $forwarded = explode(',', (string) ($_SERVER['HTTP_FORWARDED'] ?? ''))[0];
+    if (preg_match('/(?:^|;)\s*host=(?:"([^"]+)"|([^;\s]+))/i', $forwarded, $forwardedMatches) === 1) {
+        $domain = normalize_request_authority((string) (($forwardedMatches[1] ?? '') !== '' ? $forwardedMatches[1] : ($forwardedMatches[2] ?? '')));
+        if ($domain !== null) $legacyDomains[] = $domain;
+    }
+    foreach (array_unique($legacyDomains) as $domain) {
+        if ($domain !== '') $legacySignatures[] = hash_hmac('sha256', 'setup:setup-draft:' . $domain . ':' . $nonce, $key);
+    }
+    foreach ($legacySignatures as $signature) if (hash_equals($signature, $matches[2])) return $nonce;
+    return null;
+}
+
+function rebind_setup_draft(string $previousToken, ?string $nonce = null): array
+{
+    $nonce ??= bin2hex(random_bytes(32));
+    $token = setup_signed_token('setup-draft', $nonce) ?? bin2hex(random_bytes(32));
+    $window = [
+        'token' => $token,
+        'previous_token' => $previousToken,
+        'created_at' => time(),
+        'domain' => request_domain_binding(),
+    ];
+    $_SESSION['setup_draft_window'] = $window;
+    unset($_SESSION['setup_connection_tests']);
+    return $window;
+}
+
+function setup_draft_window(?string $candidate = null): array
+{
+    $domain = request_domain_binding();
+    if (is_string($candidate) && setup_signed_token_is_valid('setup-draft', $candidate)) {
+        $window = ['token' => $candidate, 'created_at' => time(), 'domain' => $domain];
+        $_SESSION['setup_draft_window'] = $window;
+        return $window;
+    }
+    $window = $_SESSION['setup_draft_window'] ?? [];
+    $candidateMatchesWindow = is_string($candidate) && $candidate !== ''
+        && hash_equals((string) ($window['token'] ?? ''), $candidate);
+    $legacyNonce = is_string($candidate) ? setup_draft_legacy_nonce($candidate) : null;
+    if (is_string($candidate) && $candidate !== '' && csrf_request_has_same_origin_proof()
+        && ($candidateMatchesWindow || $legacyNonce !== null)) {
+        return rebind_setup_draft($candidate, $legacyNonce);
+    }
+    if (hash_equals($domain, (string) ($window['domain'] ?? ''))
+        && setup_signed_token_is_valid('setup-draft', (string) ($window['token'] ?? ''))) return $window;
+
+    $nonce = bin2hex(random_bytes(32));
+    $token = setup_signed_token('setup-draft', $nonce) ?? $nonce;
+    $window = ['token' => $token, 'created_at' => time(), 'domain' => $domain];
+    $_SESSION['setup_draft_window'] = $window;
+    unset($_SESSION['setup_connection_tests']);
     return $window;
 }
 
 function require_setup_draft(array $input): void
 {
+    $token = is_string($input['setup_draft_token'] ?? null) ? $input['setup_draft_token'] : '';
+    if (setup_signed_token_is_valid('setup-draft', $token)) return;
     $window = $_SESSION['setup_draft_window'] ?? [];
-    if (!is_string($input['setup_draft_token'] ?? null)
-        || !hash_equals((string) ($window['token'] ?? ''), $input['setup_draft_token'])
-        || empty($window['token'])) {
-        throw new SetupDraftExpiredException('初始化会话已失效，请刷新页面后重新继续。');
+    $domain = request_domain_binding();
+    $sameOrigin = csrf_request_has_same_origin_proof();
+    if ($sameOrigin && hash_equals((string) ($window['domain'] ?? ''), $domain)) {
+        if (hash_equals((string) ($window['token'] ?? ''), $token)
+            || hash_equals((string) ($window['previous_token'] ?? ''), $token)) return;
     }
+    $legacyNonce = setup_draft_legacy_nonce($token);
+    if ($sameOrigin && ($legacyNonce !== null || hash_equals((string) ($window['token'] ?? ''), $token))) {
+        rebind_setup_draft($token, $legacyNonce);
+        return;
+    }
+    throw new SetupDraftExpiredException('初始化会话已失效，请刷新页面后重新继续。');
+}
+
+function setup_browser_binding_payload(?string $candidate = null): array
+{
+    $window = setup_draft_window($candidate);
+    return ['csrf' => csrf_token(), 'setupDraftToken' => (string) ($window['token'] ?? '')];
 }
 
 function setup_password_has_minimum_length(string $password): bool
@@ -39,29 +127,38 @@ function setup_password_has_minimum_length(string $password): bool
     return $length !== false && $length >= 8;
 }
 
-// Skipped email configuration must never connect or persist draft credentials.
+// Saving mail settings only validates the fields; the email step's test button performs the SMTP connection and send.
 function setup_mail_configuration(array $input, string $recipient): array
 {
     $mode = (string) ($input['smtp_mode'] ?? 'configure');
     if ($mode === 'skip') return [];
     if ($mode !== 'configure') throw new InvalidArgumentException('请选择配置邮件或稍后配置。');
-    require_once __DIR__ . '/smtp_runtime.php';
-    smtp_test_message($input, $recipient);
+    $host = trim((string) ($input['smtp_host'] ?? ''));
+    $port = trim((string) ($input['smtp_port'] ?? ''));
+    $username = trim((string) ($input['smtp_username'] ?? ''));
+    $password = (string) ($input['smtp_password'] ?? '');
+    $encryption = (string) ($input['smtp_encryption'] ?? 'ssl');
+    if ($host === '' || !preg_match('/^\d{1,5}$/', $port) || (int) $port < 1 || (int) $port > 65535
+        || $username === '' || $password === '' || !in_array($encryption, ['ssl', 'tls'], true)) {
+        throw new InvalidArgumentException('邮件配置不完整，请检查服务器地址、端口、账号、密码与加密方式。');
+    }
     return [
-        'host' => trim((string) ($input['smtp_host'] ?? '')),
-        'port' => trim((string) ($input['smtp_port'] ?? '')),
-        'username' => trim((string) ($input['smtp_username'] ?? '')),
-        'password' => (string) ($input['smtp_password'] ?? ''),
-        'encryption' => (string) ($input['smtp_encryption'] ?? 'ssl'),
+        'host' => $host,
+        'port' => $port,
+        'username' => $username,
+        'password' => $password,
+        'encryption' => $encryption,
     ];
 }
 
-// Bind successful checks to the current session and exact connection settings.
+// Bind successful checks to the exact connection settings; signed cookies let
+// the setup flow survive proxy routing to another PHP worker.
 function setup_connection_fingerprint(array $input, string $stage): string
 {
     $database = setup_database_options($input);
-    $values = $stage === 'database' ? $database : [
-        'database' => $database, 'enabled' => !empty($input['redis_enabled']),
+    $values = ['domain' => request_domain_binding(), 'database' => $database];
+    if ($stage !== 'database') $values += [
+        'enabled' => !empty($input['redis_enabled']),
         'host' => trim((string) ($input['redis_host'] ?? '127.0.0.1')),
         'password' => (string) ($input['redis_password'] ?? ''),
     ];
@@ -70,14 +167,67 @@ function setup_connection_fingerprint(array $input, string $stage): string
 
 function setup_connection_test_record(array $input, string $stage): void
 {
-    $_SESSION['setup_connection_tests'][$stage] = ['fingerprint' => setup_connection_fingerprint($input, $stage), 'time' => time()];
+    $fingerprint = setup_connection_fingerprint($input, $stage);
+    $time = time();
+    $_SESSION['setup_connection_tests'][$stage] = ['fingerprint' => $fingerprint, 'time' => $time];
+    $key = setup_local_signing_key();
+    if ($key === null) return;
+    $payload = request_domain_binding() . ':' . $stage . ':' . $fingerprint . ':' . $time;
+    $value = $time . '.' . $fingerprint . '.' . hash_hmac('sha256', 'setup-connection-test:' . $payload, $key);
+    $name = setup_connection_test_cookie_name($stage);
+    setcookie($name, $value, [
+        'expires' => $time + SETUP_CONNECTION_TEST_TTL_SECONDS,
+        'path' => '/',
+        'secure' => request_is_https(),
+        'httponly' => true,
+        'samesite' => 'Lax',
+    ]);
+    $_COOKIE[$name] = $value;
 }
 
 function setup_connection_test_valid(array $input, string $stage): bool
 {
+    $fingerprint = setup_connection_fingerprint($input, $stage);
+    $cookie = (string) ($_COOKIE[setup_connection_test_cookie_name($stage)] ?? '');
+    if (preg_match('/^(\d+)\.([a-f0-9]{64})\.([a-f0-9]{64})$/D', $cookie, $matches) === 1) {
+        $time = (int) $matches[1];
+        $cookieFingerprint = $matches[2];
+        $key = setup_local_signing_key();
+        $payload = request_domain_binding() . ':' . $stage . ':' . $cookieFingerprint . ':' . $time;
+        $expected = $key === null ? '' : hash_hmac('sha256', 'setup-connection-test:' . $payload, $key);
+        if ($time > time() - SETUP_CONNECTION_TEST_TTL_SECONDS
+            && hash_equals($fingerprint, $cookieFingerprint)
+            && $expected !== ''
+            && hash_equals($expected, $matches[3])) return true;
+    }
     $record = $_SESSION['setup_connection_tests'][$stage] ?? [];
     return ($record['time'] ?? 0) > time() - SETUP_CONNECTION_TEST_TTL_SECONDS
-        && hash_equals(setup_connection_fingerprint($input, $stage), (string) ($record['fingerprint'] ?? ''));
+        && hash_equals($fingerprint, (string) ($record['fingerprint'] ?? ''));
+}
+
+function setup_connection_test_cookie_name(string $stage): string
+{
+    return 'picapi_setup_test_' . preg_replace('/[^a-z0-9_-]/i', '', $stage) . '_' . substr(app_instance_id(), 0, 12)
+        . '_' . substr(hash('sha256', request_domain_binding()), 0, 12);
+}
+
+function clear_setup_connection_test_cookie(string $stage): void
+{
+    $options = [
+        'expires' => time() - 3600,
+        'path' => '/',
+        'secure' => request_is_https(),
+        'httponly' => true,
+        'samesite' => 'Lax',
+    ];
+    $name = setup_connection_test_cookie_name($stage);
+    setcookie($name, '', $options);
+    unset($_COOKIE[$name]);
+    $legacyName = 'picapi_setup_test_' . preg_replace('/[^a-z0-9_-]/i', '', $stage) . '_' . substr(app_instance_id(), 0, 12);
+    if ($legacyName !== $name) {
+        setcookie($legacyName, '', $options);
+        unset($_COOKIE[$legacyName]);
+    }
 }
 
 function require_setup_connection_tests(array $input): void
@@ -228,7 +378,134 @@ function setup_code_ensure(): void
 
 function setup_code_is_verified(): bool
 {
-    return ($_SESSION['setup_code_verified'] ?? false) === true;
+    $domain = request_domain_binding();
+    $sessionState = $_SESSION['setup_code_verified'] ?? null;
+    if ($domain === 'unknown') {
+        $sessionDomain = (string) ($_SESSION['_picapi_domain_binding'] ?? '');
+        if ($sessionDomain !== '' && ($sessionState === true || (is_string($sessionState) && hash_equals($sessionDomain, $sessionState)))) return true;
+        $key = setup_local_signing_key();
+        if ($key === null) return false;
+        $legacyDomains = [$sessionDomain];
+        if (is_string($sessionState) && $sessionState !== '') $legacyDomains[] = $sessionState;
+        $configuredAuthority = normalize_request_authority((string) (getenv('PICAPI_BASE_URL') ?: ''));
+        if ($configuredAuthority !== null) $legacyDomains[] = $configuredAuthority;
+        foreach (['HTTP_HOST', 'HTTP_X_FORWARDED_HOST', 'HTTP_X_ORIGINAL_HOST'] as $header) {
+            $candidate = normalize_request_authority(explode(',', (string) ($_SERVER[$header] ?? ''))[0]);
+            if ($candidate !== null) $legacyDomains[] = $candidate;
+        }
+        $forwarded = explode(',', (string) ($_SERVER['HTTP_FORWARDED'] ?? ''))[0];
+        if (preg_match('/(?:^|;)\s*host=(?:"([^"]+)"|([^;\s]+))/i', $forwarded, $forwardedMatches) === 1) {
+            $candidate = normalize_request_authority((string) (($forwardedMatches[1] ?? '') !== '' ? $forwardedMatches[1] : ($forwardedMatches[2] ?? '')));
+            if ($candidate !== null) $legacyDomains[] = $candidate;
+        }
+        foreach ($_COOKIE as $name => $legacyCookie) {
+            if (!is_string($name) || !str_starts_with($name, 'picapi_setup_verified_') || !is_string($legacyCookie)) continue;
+            if (preg_match('/^([a-f0-9]{64})\.([a-f0-9]{64})$/D', $legacyCookie, $legacyMatches) !== 1) continue;
+            $oldSignatures = [hash_hmac('sha256', 'setup-code-verified:' . $legacyMatches[1], $key)];
+            foreach (array_unique($legacyDomains) as $legacyDomain) {
+                if ($legacyDomain !== '') $oldSignatures[] = hash_hmac('sha256', 'setup-code-verified:' . $legacyDomain . ':' . $legacyMatches[1], $key);
+            }
+            foreach ($oldSignatures as $signature) if (hash_equals($signature, $legacyMatches[2])) return true;
+        }
+        return false;
+    }
+    if ($sessionState === true) {
+        // Migrate a verified state from the host-only PHP session.
+        mark_setup_code_verified();
+        return true;
+    }
+    if (is_string($sessionState) && $sessionState !== '' && hash_equals($domain, $sessionState)) return true;
+    if ($sessionState !== null) unset($_SESSION['setup_code_verified']);
+    $key = setup_local_signing_key();
+    if ($key === null) return false;
+    $cookie = (string) ($_COOKIE[setup_code_verified_cookie_name()] ?? '');
+    if (preg_match('/^([a-f0-9]{64})\.([a-f0-9]{64})$/D', $cookie, $matches) === 1) {
+        $expected = hash_hmac('sha256', 'setup-code-verified:' . $domain . ':' . $matches[1], $key);
+        if (hash_equals($expected, $matches[2])) return true;
+    }
+
+    // Rebind proofs created by earlier releases. Host-only cookies are only
+    // sent back to the authority that received them, and the new cookie is
+    // signed for that authority before it is reused.
+    $legacyName = 'picapi_setup_verified_' . substr(app_instance_id(), 0, 12);
+    $legacyCookies = [$legacyName => (string) ($_COOKIE[$legacyName] ?? '')];
+    foreach ($_COOKIE as $name => $legacyCookie) {
+        if (is_string($name) && str_starts_with($name, 'picapi_setup_verified_') && is_string($legacyCookie)) $legacyCookies[$name] = $legacyCookie;
+    }
+    $legacyDomains = [$domain];
+    if (is_string($sessionState) && $sessionState !== '') $legacyDomains[] = $sessionState;
+    $configuredAuthority = normalize_request_authority((string) (getenv('PICAPI_BASE_URL') ?: ''));
+    if ($configuredAuthority !== null) $legacyDomains[] = $configuredAuthority;
+    foreach (['HTTP_HOST', 'HTTP_X_FORWARDED_HOST', 'HTTP_X_ORIGINAL_HOST'] as $header) {
+        $candidate = normalize_request_authority(explode(',', (string) ($_SERVER[$header] ?? ''))[0]);
+        if ($candidate !== null) $legacyDomains[] = $candidate;
+    }
+    $forwarded = explode(',', (string) ($_SERVER['HTTP_FORWARDED'] ?? ''))[0];
+    if (preg_match('/(?:^|;)\s*host=(?:"([^"]+)"|([^;\s]+))/i', $forwarded, $forwardedMatches) === 1) {
+        $candidate = normalize_request_authority((string) (($forwardedMatches[1] ?? '') !== '' ? $forwardedMatches[1] : ($forwardedMatches[2] ?? '')));
+        if ($candidate !== null) $legacyDomains[] = $candidate;
+    }
+    foreach ($legacyCookies as $legacyCookie) {
+        if (preg_match('/^([a-f0-9]{64})\.([a-f0-9]{64})$/D', $legacyCookie, $legacyMatches) !== 1) continue;
+        $oldSignatures = [hash_hmac('sha256', 'setup-code-verified:' . $legacyMatches[1], $key)];
+        foreach (array_unique($legacyDomains) as $legacyDomain) {
+            if ($legacyDomain !== '') $oldSignatures[] = hash_hmac('sha256', 'setup-code-verified:' . $legacyDomain . ':' . $legacyMatches[1], $key);
+        }
+        foreach ($oldSignatures as $signature) {
+            if (hash_equals($signature, $legacyMatches[2])) {
+                mark_setup_code_verified();
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+function setup_code_verified_cookie_name(): string
+{
+    return 'picapi_setup_verified_' . substr(app_instance_id(), 0, 12)
+        . '_' . substr(hash('sha256', request_domain_binding()), 0, 12);
+}
+
+function mark_setup_code_verified(): void
+{
+    $domain = request_domain_binding();
+    if ($domain === 'unknown') {
+        $_SESSION['setup_code_verified'] = (string) ($_SESSION['_picapi_domain_binding'] ?? 'unknown');
+        return;
+    }
+    $_SESSION['setup_code_verified'] = $domain;
+    $key = setup_local_signing_key();
+    if ($key === null) return;
+    $nonce = bin2hex(random_bytes(32));
+    $value = $nonce . '.' . hash_hmac('sha256', 'setup-code-verified:' . $domain . ':' . $nonce, $key);
+    setcookie(setup_code_verified_cookie_name(), $value, [
+        'expires' => time() + 7 * 86400,
+        'path' => '/',
+        'secure' => request_is_https(),
+        'httponly' => true,
+        'samesite' => 'Lax',
+    ]);
+    $_COOKIE[setup_code_verified_cookie_name()] = $value;
+}
+
+function clear_setup_code_verified_cookie(): void
+{
+    $options = [
+        'expires' => time() - 3600,
+        'path' => '/',
+        'secure' => request_is_https(),
+        'httponly' => true,
+        'samesite' => 'Lax',
+    ];
+    $currentName = setup_code_verified_cookie_name();
+    setcookie($currentName, '', $options);
+    unset($_COOKIE[$currentName]);
+    foreach ($_COOKIE as $name => $_value) {
+        if (!is_string($name) || $name === $currentName || !str_starts_with($name, 'picapi_setup_verified_')) continue;
+        setcookie($name, '', $options);
+        unset($_COOKIE[$name]);
+    }
 }
 
 function setup_code_matches(string $submitted): bool
@@ -239,26 +516,20 @@ function setup_code_matches(string $submitted): bool
     return $expected !== '' && hash_equals(strtoupper($expected), strtoupper(trim($submitted)));
 }
 
-/** Validate once, bind success to this session, and immediately remove the file. */
+/** Validate once and bind success to a signed browser cookie through setup. */
 function require_setup_code(array $input): void
 {
     if (setup_code_is_verified()) return;
     if (!is_string($input['setup_code'] ?? null) || !setup_code_matches($input['setup_code'])) {
         throw new InvalidArgumentException('验证码错误，请检查项目根目录 setup.txt 中的内容。');
     }
-    $_SESSION['setup_code_verified'] = true;
-    $path = setup_code_path();
-    if (is_file($path) && !is_link($path) && !@unlink($path)) {
-        unset($_SESSION['setup_code_verified']);
-        throw new RuntimeException('验证码验证成功，但无法删除 setup.txt；请检查项目目录权限后重试。');
-    }
-    clearstatcache(true, $path);
+    mark_setup_code_verified();
 }
 
 function require_setup_code_verified(): void
 {
     if (!setup_code_is_verified()) {
-        throw new InvalidArgumentException('请先在数据库连接步骤输入项目根目录中的本地验证码。');
+        throw new InvalidArgumentException('请先输入并验证初始化验证码。');
     }
 }
 

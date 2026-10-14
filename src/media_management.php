@@ -50,6 +50,7 @@ function move_media_items(array $keys, string $category): void
     try {
         foreach ($moves as $item) {
             if (!rename($item['path'], $item['destination'])) throw new RuntimeException('移动图片失败。');
+            make_public_image_readable($item['destination']);
             $completed[] = $item;
         }
     } catch (Throwable $error) {

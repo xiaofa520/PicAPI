@@ -45,8 +45,33 @@ function admin_database_unavailable_message(): string
 
 function ensure_directory(string $path): void
 {
-    if (!is_dir($path) && !mkdir($path, 0750, true) && !is_dir($path)) {
+    // Failed directory creation is reported through the controlled exception
+    // below. Suppress PHP's HTML warning so filesystem paths never leak into
+    // a public response when the deployment user lacks write access.
+    if (!is_dir($path) && !@mkdir($path, 0750, true) && !is_dir($path)) {
         throw new RuntimeException("Unable to create required directory: {$path}");
+    }
+}
+
+/**
+ * Public image directories must remain traversable by the HTTP server even
+ * when PHP-FPM runs under a different account. The contents are public by
+ * design; only the PHP process needs write access.
+ */
+function ensure_public_image_directory(string $path): void
+{
+    ensure_directory($path);
+    if (DIRECTORY_SEPARATOR !== '\\' && !is_link($path)) {
+        $permissions = @fileperms($path);
+        if (is_int($permissions) && ($permissions & 0777) !== 0755) @chmod($path, 0755);
+    }
+}
+
+/** Make a published public image readable by Nginx/Apache on Unix systems. */
+function make_public_image_readable(string $path): void
+{
+    if (DIRECTORY_SEPARATOR !== '\\' && is_file($path) && !is_link($path)) {
+        @chmod($path, 0644);
     }
 }
 
@@ -147,8 +172,8 @@ function initialize_storage(): void
     ensure_directory(STORAGE_DIR . '/logs/endpoints/auto');
     ensure_directory(STORAGE_DIR . '/logs/endpoints/pc');
     ensure_directory(STORAGE_DIR . '/logs/endpoints/mobile');
-    ensure_directory(IMAGE_PC_DIR);
-    ensure_directory(IMAGE_MOBILE_DIR);
+    ensure_public_image_directory(IMAGE_PC_DIR);
+    ensure_public_image_directory(IMAGE_MOBILE_DIR);
     ensure_category_endpoint('pc', 'default');
     ensure_category_endpoint('mobile', 'default');
     repair_migrated_sqlite_database_configuration();
@@ -165,13 +190,24 @@ function request_is_from_trusted_proxy(): bool
 function request_is_https(): bool
 {
     // Forwarded protocol headers are client-controlled unless the immediate
-    // peer is an explicitly trusted reverse proxy.
-    if (request_is_from_trusted_proxy()) {
+    // peer is an explicitly trusted reverse proxy. A private upstream Host
+    // also identifies deployments where the proxy rewrites Host to localhost.
+    if (strtolower(trim((string) ($_SERVER['HTTP_SEC_FETCH_SITE'] ?? ''))) === 'same-origin') {
+        $originScheme = strtolower((string) (parse_url((string) ($_SERVER['HTTP_ORIGIN'] ?? ''), PHP_URL_SCHEME) ?: ''));
+        if ($originScheme === 'https') return true;
+    }
+    $internalUpstream = request_host_is_internal((string) ($_SERVER['HTTP_HOST'] ?? ''));
+    if (request_is_from_trusted_proxy() || $internalUpstream) {
         foreach (['HTTP_X_FORWARDED_PROTO', 'HTTP_X_FORWARDED_PROTOCOL', 'HTTP_X_URL_SCHEME'] as $header) {
             $forwardedProto = strtolower(trim(explode(',', (string) ($_SERVER[$header] ?? ''))[0]));
             if ($forwardedProto === 'https') {
                 return true;
             }
+        }
+        $forwarded = explode(',', (string) ($_SERVER['HTTP_FORWARDED'] ?? ''))[0];
+        if (preg_match('/(?:^|;)\s*proto=(?:"([^"]+)"|([^;\s]+))/i', $forwarded, $matches) === 1) {
+            $forwardedProto = strtolower((string) (($matches[1] ?? '') !== '' ? $matches[1] : ($matches[2] ?? '')));
+            if ($forwardedProto === 'https') return true;
         }
         $cloudflareVisitor = json_decode((string) ($_SERVER['HTTP_CF_VISITOR'] ?? ''), true);
         if (is_array($cloudflareVisitor) && strtolower((string) ($cloudflareVisitor['scheme'] ?? '')) === 'https') {
@@ -207,9 +243,12 @@ function require_secure_admin_transport(): void
     if (request_is_https() || request_is_loopback_client()) return;
 
     $method = strtoupper((string) ($_SERVER['REQUEST_METHOD'] ?? 'GET'));
-    $host = (string) ($_SERVER['HTTP_HOST'] ?? '');
+    $host = request_domain_binding();
     $uri = (string) ($_SERVER['REQUEST_URI'] ?? '/admin/login.php');
-    if (in_array($method, ['GET', 'HEAD'], true) && preg_match('/^[a-z0-9.-]+(?::\d{1,5})?$/i', $host) === 1 && str_starts_with($uri, '/')) {
+    if (in_array($method, ['GET', 'HEAD'], true)
+        && $host !== 'unknown'
+        && str_starts_with($uri, '/')
+        && preg_match('/[\r\n]/', $uri) !== 1) {
         header('Cache-Control: no-store, max-age=0');
         header('Location: https://' . $host . $uri, true, 302);
         exit;
@@ -242,17 +281,16 @@ function enforce_admin_transport_policy(): void
 function application_base_url(): string
 {
     $configured = trim((string) (getenv('PICAPI_BASE_URL') ?: ''));
-    if ($configured !== '') {
+    $configuredAuthority = $configured !== '' ? normalize_request_authority($configured) : null;
+    if ($configuredAuthority !== null && !request_host_is_internal($configuredAuthority)) {
         if (request_is_https() && str_starts_with(strtolower($configured), 'http://')) {
             $configured = 'https://' . substr($configured, 7);
         }
         return rtrim($configured, '/');
     }
 
-    $host = (string) ($_SERVER['HTTP_HOST'] ?? '');
-    if (!preg_match('/^[a-z0-9.-]+(?::\d{1,5})?$/i', $host)) {
-        return '';
-    }
+    $host = request_domain_binding();
+    if ($host === 'unknown') return '';
     return (request_is_https() ? 'https' : 'http') . '://' . $host;
 }
 
@@ -437,15 +475,18 @@ function request_client_device_label(): string
 {
     $userAgent = trim((string) ($_SERVER['HTTP_USER_AGENT'] ?? ''));
     if ($userAgent === '') return '未知设备';
-    $browser = preg_match('/Edg\//i', $userAgent) ? 'Microsoft Edge'
-        : (preg_match('/Firefox\//i', $userAgent) ? 'Firefox'
-        : (preg_match('/Chrome\//i', $userAgent) ? 'Chrome'
-        : (preg_match('/Safari\//i', $userAgent) ? 'Safari' : '未知浏览器')));
+    $browser = preg_match('/OPR\//i', $userAgent) ? 'Opera'
+        : (preg_match('/SamsungBrowser\//i', $userAgent) ? 'Samsung Internet'
+        : (preg_match('/Edg(?:A|iOS)?\//i', $userAgent) ? 'Microsoft Edge'
+        : (preg_match('/FxiOS\//i', $userAgent) || preg_match('/Firefox\//i', $userAgent) ? 'Firefox'
+        : (preg_match('/CriOS\//i', $userAgent) || preg_match('/Chrome\//i', $userAgent) || preg_match('/Chromium\//i', $userAgent) ? 'Chrome'
+        : (preg_match('/Safari\//i', $userAgent) ? 'Safari' : '未知浏览器')))));
     $platform = preg_match('/Windows NT/i', $userAgent) ? 'Windows'
         : (preg_match('/Android/i', $userAgent) ? 'Android'
-        : (preg_match('/iPhone|iPad|iPod/i', $userAgent) ? 'iOS'
-        : (preg_match('/Mac OS X/i', $userAgent) ? 'macOS'
-        : (preg_match('/Linux/i', $userAgent) ? 'Linux' : '未知系统'))));
+        : (preg_match('/iPhone|iPad|iPod/i', $userAgent) || (preg_match('/Macintosh/i', $userAgent) && preg_match('/Mobile\//i', $userAgent)) ? 'iOS'
+        : (preg_match('/Mac OS X|Macintosh/i', $userAgent) ? 'macOS'
+        : (preg_match('/CrOS/i', $userAgent) ? 'ChromeOS'
+        : (preg_match('/Linux/i', $userAgent) ? 'Linux' : '未知系统')))));
     return $browser . ' · ' . $platform;
 }
 
@@ -500,6 +541,15 @@ function start_secure_session(): void
         'path' => '/',
     ]);
     session_start();
+    $domain = request_domain_binding();
+    if ($domain !== 'unknown') {
+        $boundDomain = (string) ($_SESSION['_picapi_domain_binding'] ?? '');
+        if ($boundDomain !== '' && !hash_equals($boundDomain, $domain)) {
+            $_SESSION = [];
+            session_regenerate_id(true);
+        }
+        $_SESSION['_picapi_domain_binding'] = $domain;
+    }
 }
 
 function refresh_admin_session_cookie(): void
@@ -749,20 +799,40 @@ function installation_config(): ?array
 function installation_session_generation(): string
 {
     $config = installation_config() ?? [];
-    $database = is_array($config['database'] ?? null) ? $config['database'] : [];
     $generation = $config['session_generation'] ?? null;
     if (is_string($generation) && preg_match('/^[a-f0-9]{64}$/D', $generation) === 1) {
         return $generation;
     }
 
-    // Compatibility for installations created before session_generation was
-    // introduced. Their existing sessions have no matching field and are
-    // therefore invalidated once; subsequent initializations use randomness.
-    return hash('sha256', serialize([
-        $config['created_at'] ?? '',
-        $config['admin_email'] ?? '',
-        $database['dsn'] ?? '',
-    ]));
+    // Migrate older installations to a private, persistent generation. This
+    // also gives signed CSRF cookies a secret shared by requests handled by
+    // different workers behind a reverse proxy.
+    $lock = @fopen(STORAGE_DIR . '/installation-generation.lock', 'c+');
+    if ($lock === false) return hash('sha256', serialize([$config['created_at'] ?? '', $config['admin_email'] ?? '']));
+    try {
+        if (!flock($lock, LOCK_EX)) return hash('sha256', serialize([$config['created_at'] ?? '', $config['admin_email'] ?? '']));
+        $config = installation_config() ?? [];
+        $generation = $config['session_generation'] ?? null;
+        if (is_string($generation) && preg_match('/^[a-f0-9]{64}$/D', $generation) === 1) return $generation;
+        if ($config === []) return hash('sha256', 'picapi-installation-not-configured');
+
+        $generation = bin2hex(random_bytes(32));
+        $config['session_generation'] = $generation;
+        $path = STORAGE_DIR . '/installation.php';
+        $temporary = $path . '.' . bin2hex(random_bytes(6)) . '.tmp';
+        $contents = "<?php\ndeclare(strict_types=1);\n\nreturn " . var_export($config, true) . ";\n";
+        if (file_put_contents($temporary, $contents, LOCK_EX) === false || !rename($temporary, $path)) {
+            @unlink($temporary);
+            return hash('sha256', serialize([$config['created_at'] ?? '', $config['admin_email'] ?? '']));
+        }
+        @chmod($path, 0600);
+        if (function_exists('opcache_invalidate')) opcache_invalidate($path, true);
+        clearstatcache(true, $path);
+        return $generation;
+    } finally {
+        @flock($lock, LOCK_UN);
+        fclose($lock);
+    }
 }
 
 /**
@@ -1262,25 +1332,195 @@ function require_admin(): string
     return $admin;
 }
 
+function csrf_cookie_name(): string
+{
+    return 'picapi_csrf_' . substr(hash('sha256', app_instance_id() . '|' . request_domain_binding()), 0, 16);
+}
+
+function normalize_request_authority(string $value): ?string
+{
+    $value = trim($value);
+    if ($value === '') return null;
+    $parts = preg_match('/^https?:\/\//i', $value) === 1 ? parse_url($value) : parse_url('//' . $value);
+    if (!is_array($parts) || !isset($parts['host']) || isset($parts['user']) || isset($parts['pass'])) return null;
+    $host = strtolower(rtrim(trim((string) $parts['host'], '[]'), '.'));
+    $isIp = filter_var($host, FILTER_VALIDATE_IP) !== false;
+    $validHost = $isIp
+        || preg_match('/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))*$/i', $host) === 1;
+    if (!$validHost) return null;
+    if ($isIp && str_contains($host, ':')) $host = '[' . $host . ']';
+    $port = isset($parts['port']) ? (int) $parts['port'] : 0;
+    if ($port < 0 || $port > 65535) return null;
+    // Normalize default web ports independent of which hop supplied the
+    // authority. A proxy may include :443 in Host while the browser Origin
+    // omits it, or the backend may not know the external scheme on the first GET.
+    if ($port === 80 || $port === 443) $port = 0;
+    return $host . ($port > 0 ? ':' . $port : '');
+}
+
+function request_host_is_internal(string $authority): bool
+{
+    $parts = parse_url('http://' . $authority);
+    $host = strtolower(trim((string) ($parts['host'] ?? ''), '[]'));
+    if ($host === 'localhost' || str_ends_with($host, '.localhost') || str_ends_with($host, '.local')) return true;
+    if (filter_var($host, FILTER_VALIDATE_IP) !== false) {
+        return filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) === false;
+    }
+    return false;
+}
+
+function request_domain_binding(): string
+{
+    $serverHost = normalize_request_authority((string) ($_SERVER['HTTP_HOST'] ?? ''));
+    $serverHostIsInternal = $serverHost !== null && request_host_is_internal($serverHost);
+    $mayTrustForwardedHost = request_is_from_trusted_proxy() || $serverHostIsInternal;
+    $fetchSite = strtolower((string) ($_SERVER['HTTP_SEC_FETCH_SITE'] ?? ''));
+    $browserOrigin = null;
+    if ($fetchSite === 'same-origin') {
+        $browserOrigin = normalize_request_authority((string) ($_SERVER['HTTP_ORIGIN'] ?? ''));
+    }
+
+    // The browser's same-origin authority is the visitor-facing host, even
+    // when a reverse proxy rewrites the upstream Host header.
+    if ($browserOrigin !== null) return $browserOrigin;
+
+    // Reverse proxies should overwrite these standard host-forwarding headers
+    // with the public authority the browser used to reach this application.
+    // Trust them only from a configured proxy, or when the upstream Host is
+    // itself an internal name (as in a port-forwarded hosted workspace).
+    if ($mayTrustForwardedHost) {
+        foreach (['HTTP_X_FORWARDED_HOST', 'HTTP_X_ORIGINAL_HOST'] as $header) {
+            $candidate = normalize_request_authority(explode(',', (string) ($_SERVER[$header] ?? ''))[0]);
+            if ($candidate !== null && !request_host_is_internal($candidate)) return $candidate;
+        }
+        $forwarded = explode(',', (string) ($_SERVER['HTTP_FORWARDED'] ?? ''))[0];
+        if (preg_match('/(?:^|;)\s*host=(?:"([^"]+)"|([^;\s]+))/i', $forwarded, $matches) === 1) {
+            $candidate = normalize_request_authority((string) (($matches[1] ?? '') !== '' ? $matches[1] : ($matches[2] ?? '')));
+            if ($candidate !== null && !request_host_is_internal($candidate)) return $candidate;
+        }
+    }
+
+    if ($fetchSite === 'same-origin') {
+        $candidate = normalize_request_authority((string) ($_SERVER['HTTP_REFERER'] ?? ''));
+        if ($candidate !== null) return $candidate;
+    }
+
+    if ($serverHost !== null && !$serverHostIsInternal) return $serverHost;
+
+    // Some proxies omit public Host metadata on ordinary page loads. Once a
+    // host-only browser session has been bound from Origin, keep using that
+    // public authority when the upstream request exposes only localhost.
+    $sessionDomain = normalize_request_authority((string) ($_SESSION['_picapi_domain_binding'] ?? ''));
+    if ($sessionDomain !== null && !request_host_is_internal($sessionDomain)) return $sessionDomain;
+
+    // This value is deliberately request-derived: a configured canonical URL
+    // must not make security state follow a different domain from the browser.
+    // Never cryptographically bind to a proxy's private upstream address.
+    return 'unknown';
+}
+
+function setup_local_signing_key(): ?string
+{
+    $path = APP_ROOT . '/setup.txt';
+    if (!is_file($path) || is_link($path)) return null;
+    $code = trim((string) @file_get_contents($path));
+    if ($code === '') return null;
+    return hash('sha256', "picapi-setup-v1\0" . $code, true);
+}
+
+function csrf_signing_key(): ?string
+{
+    // The installation generation is private server-side state shared by
+    // deployments that share their installation configuration. Rotating it
+    // revokes outstanding CSRF tokens along with administrator sessions.
+    if (installation_config() === null) return setup_local_signing_key();
+    $generation = installation_session_generation();
+    $config = installation_config() ?? [];
+    $persistedGeneration = (string) ($config['session_generation'] ?? '');
+    if (!preg_match('/^[a-f0-9]{64}$/D', $persistedGeneration) || !hash_equals($persistedGeneration, $generation)) {
+        return setup_local_signing_key();
+    }
+    return hash('sha256', $generation, true);
+}
+
+function csrf_token_signature(string $nonce, string $key): string
+{
+    return hash_hmac('sha256', 'csrf:' . request_domain_binding() . ':' . $nonce, $key);
+}
+
+function csrf_token_is_valid(string $token): bool
+{
+    if (preg_match('/^([a-f0-9]{64})\.([a-f0-9]{64})$/D', $token, $matches) !== 1) return false;
+    $key = csrf_signing_key();
+    return $key !== null && hash_equals(csrf_token_signature($matches[1], $key), $matches[2]);
+}
+
 function csrf_token(): string
 {
     start_secure_session();
-    $instanceId = app_instance_id();
-    if (empty($_SESSION['csrf']) || !hash_equals($instanceId, (string) ($_SESSION['csrf_instance'] ?? ''))) {
-        $_SESSION['csrf'] = hash_hmac('sha256', random_bytes(32), $instanceId);
-        $_SESSION['csrf_instance'] = $instanceId;
+    $cookieName = csrf_cookie_name();
+    $cookieToken = (string) ($_COOKIE[$cookieName] ?? '');
+    $key = csrf_signing_key();
+    if ($key === null) {
+        // Keep a session-bound fallback only when neither an installation
+        // secret nor the local setup-code file is available.
+        if (empty($_SESSION['csrf'])
+            || !hash_equals(app_instance_id(), (string) ($_SESSION['csrf_instance'] ?? ''))
+            || !hash_equals(request_domain_binding(), (string) ($_SESSION['csrf_domain'] ?? ''))) {
+            $_SESSION['csrf'] = bin2hex(random_bytes(32));
+            $_SESSION['csrf_instance'] = app_instance_id();
+            $_SESSION['csrf_domain'] = request_domain_binding();
+        }
+        return (string) $_SESSION['csrf'];
     }
-    return $_SESSION['csrf'];
+    if (!csrf_token_is_valid($cookieToken)) {
+        $nonce = bin2hex(random_bytes(32));
+        $cookieToken = $nonce . '.' . csrf_token_signature($nonce, $key);
+        $params = session_get_cookie_params();
+        setcookie($cookieName, $cookieToken, [
+            'expires' => time() + admin_session_ttl_seconds(),
+            'path' => (string) ($params['path'] ?? '/'),
+            'secure' => request_is_https(),
+            'httponly' => true,
+            'samesite' => 'Lax',
+        ]);
+        $_COOKIE[$cookieName] = $cookieToken;
+    }
+
+    // Keep the server-side copy for existing pages and applications, while
+    // the signed double-submit cookie also works when a proxy routes the POST
+    // to a worker that cannot read the GET request's local session file.
+    $_SESSION['csrf'] = $cookieToken;
+    $_SESSION['csrf_instance'] = app_instance_id();
+    $_SESSION['csrf_domain'] = request_domain_binding();
+    return $cookieToken;
+}
+
+function csrf_request_has_same_origin_proof(): bool
+{
+    // Browser Fetch Metadata is not writable by page JavaScript. Requiring its
+    // strict same-origin value and matching it against the detected public host.
+    // This supports TLS proxies that rewrite HTTP_HOST to an internal upstream
+    // name while still rejecting cross-site and sibling-subdomain submissions.
+    if (strtolower(trim((string) ($_SERVER['HTTP_SEC_FETCH_SITE'] ?? ''))) !== 'same-origin') return false;
+    $origin = normalize_request_authority((string) ($_SERVER['HTTP_ORIGIN'] ?? ''));
+    return $origin !== null && hash_equals(request_domain_binding(), $origin);
 }
 
 function verify_csrf(): void
 {
     start_secure_session();
     $submitted = (string) ($_POST['csrf'] ?? '');
-    if (empty($_SESSION['csrf'])
-        || !hash_equals(app_instance_id(), (string) ($_SESSION['csrf_instance'] ?? ''))
-        || !hash_equals((string) $_SESSION['csrf'], $submitted)) {
-        abort_request(403, 'CSRF verification failed.');
+    $sessionMatches = !empty($_SESSION['csrf'])
+        && hash_equals(app_instance_id(), (string) ($_SESSION['csrf_instance'] ?? ''))
+        && hash_equals(request_domain_binding(), (string) ($_SESSION['csrf_domain'] ?? ''))
+        && hash_equals((string) $_SESSION['csrf'], $submitted);
+    $cookieToken = (string) ($_COOKIE[csrf_cookie_name()] ?? '');
+    $signedCookieMatches = $cookieToken !== ''
+        && hash_equals($cookieToken, $submitted)
+        && csrf_token_is_valid($submitted);
+    if (!$sessionMatches && !$signedCookieMatches && !csrf_request_has_same_origin_proof()) {
+        abort_request(403, 'CSRF verification failed. Please refresh the page and try again.');
     }
 }
 
@@ -1486,9 +1726,11 @@ function ensure_category_endpoint(string $device, string $category): void
         throw new InvalidArgumentException('Invalid category endpoint.');
     }
     $directory = category_path($device, $category);
-    ensure_directory($directory);
+    ensure_public_image_directory($directory);
     $endpoint = $directory . DIRECTORY_SEPARATOR . 'index.php';
     if (is_file($endpoint)) {
+        $permissions = DIRECTORY_SEPARATOR !== '\\' ? @fileperms($endpoint) : false;
+        if (is_int($permissions) && ($permissions & 0777) !== 0644) @chmod($endpoint, 0644);
         return;
     }
     $deviceLiteral = var_export($device, true);
@@ -1496,6 +1738,7 @@ function ensure_category_endpoint(string $device, string $category): void
     if (file_put_contents($endpoint, $contents, LOCK_EX) === false) {
         throw new RuntimeException('Unable to create category endpoint.');
     }
+    if (DIRECTORY_SEPARATOR !== '\\') @chmod($endpoint, 0644);
 }
 
 function image_url(string $device, string $relativePath): string

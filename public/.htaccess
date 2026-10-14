@@ -3,6 +3,9 @@ DirectoryIndex index.php
 
 <IfModule mod_rewrite.c>
     RewriteEngine On
+    # Keep generated per-category index.php endpoints while blocking any
+    # other PHP script placed in a public image folder.
+    RewriteRule ^(?:pc|m)/img/(?![a-z0-9][a-z0-9_-]{0,48}/index\.php$).+\.(?:php[0-9]?|phtml|phar)(?:/|$) - [F,L,NC]
     RewriteRule ^(?:api/v1/random/?|favicon\.ico)$ index.php [L,QSA]
     RewriteRule ^robots\.txt$ robots.php [L]
     RewriteRule ^sitemap\.xml$ sitemap.php [L]

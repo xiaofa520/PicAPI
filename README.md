@@ -33,10 +33,10 @@ PicAPI 用来把自己保存的图片变成一个可管理、可调用的图片�
 | `src/` | PHP 业务逻辑，包括 API、图库、缓存、安全、设置和邮件服务。 |
 | `templates/admin/` | 后台登录、初始化和工作台页面模板。 |
 | `storage/` | 运行时数据：数据库、安装配置、会话、日志、安全状态和缓存。不要公开或提交其中的数据。 |
-| `config/` | Nginx 根目录部署和 `public/` 根目录部署的配置示例。 |
+| `config/` | Nginx 与 Apache 的项目根目录、`public/` 根目录部署示例。 |
 | `bin/` | 维护命令及计划任务脚本，例如每日邮件摘要。 |
 
-根目录的 `.htaccess`、`web.config` 和 `public/` 下对应文件用于 Apache、IIS 的访问控制与 URL 重写。`public/admin/assets/vendor/` 内含第三方前端库及其各自的许可证文件；这些文件应与对应库一起保留。
+根目录与 `public/` 下的 `.htaccess`、`web.config` 分别用于 Apache、IIS 的访问控制与 URL 重写。Apache 2.4 需启用 `mod_rewrite` 并允许相应目录读取 `.htaccess`；Nginx 不读取 `.htaccess`，请使用 `config/` 中的 Nginx 示例。`public/admin/assets/vendor/` 内含第三方前端库及其各自的许可证文件；这些文件应与对应库一起保留。
 
 ## 架构概览
 
@@ -72,10 +72,11 @@ flowchart LR
 
 ## 环境要求
 
-- PHP 8.1 或更高版本，启用 PDO、OpenSSL，以及所选数据库对应的 PDO 驱动。
+- PHP 8.1 或更高版本，启用 PDO、OpenSSL、Fileinfo，以及所选数据库对应的 PDO 驱动（SQLite 使用 `pdo_sqlite`）。
 - 支持 SQLite、MySQL、PostgreSQL、SQL Server。SQLite 最便于单机使用。
-- PHP 进程需要写入 `storage/`，并需要对 `public/pc/img/`、`public/m/img/` 中的图库执行相应读写操作。
-- 首次初始化和开发者重置后，PHP 进程还需短暂写入项目根目录，以创建并删除 `setup.txt`。
+- PHP-FPM/Apache 的 PHP 运行账号需要读写 `storage/` 和 `public/pc/img/`、`public/m/img/`；Nginx/Apache 静态服务账号需要读取图库目录和图片文件。Linux 上两者可能使用不同账号。
+- 首次初始化或重置时，PHP 进程还需短暂写入项目根目录，以创建并删除 `setup.txt`。初始化完成后可撤销项目根目录的 PHP 写权限。
+- Linux 文件系统区分大小写；部署和更新时保留仓库文件名及目录名的大小写。
 - GD 用于缩略图，Redis 用于可选缓存；未启用时使用文件缓存。
 - 正式网站应启用 HTTPS，并为 PHP 配置合适的上传大小和执行时间限制。
 
@@ -99,8 +100,8 @@ php -S 127.0.0.1:8768 index.php
 
 ## 首次初始化
 
-1. 打开 `/admin/`，先从项目根目录的 `setup.txt` 复制本地验证码并填入向导，再填写数据库信息。输入后自动校验，验证成功会删除文件；该文件不通过网站路由提供。SQLite 无需填写账号信息，但所有数据库都要先通过连接测试。
-2. 如果启用 Redis，点击测试时系统会先测试数据库，再测试 Redis；测试未通过不能继续。
+1. 打开 `/admin/`，从项目根目录的 `setup.txt` 复制验证码并填入向导，再填写数据库信息。验证码通过后输入内容会保留；完成初始化后会自动删除 `setup.txt`，该文件不通过网站路由提供。SQLite 无需填写账号信息。
+2. “测试连接”只检查数据库；启用了 Redis 才会一并检查 Redis。验证码由单独的验证码步骤校验。邮件服务请到邮件设置页面使用单独的测试按钮。
 3. 创建管理员账号。密码最少 8 位；请使用独立且强度足够的密码。
 4. 邮件服务可在初始化时配置，也可跳过后到系统设置中配置。未设置邮件时，依赖邮件的验证码、找回密码和通知功能无法使用。
 5. 完成向导后使用管理员账号登录。初始化草稿暂存在当前浏览器，并显示最近保存时间。
@@ -133,19 +134,59 @@ GET /?screen_width=390        按屏幕宽度选择图库
 
 ## 部署到宝塔或其他 Web 服务器
 
-推荐使用 Nginx、Apache 或 IIS 配合 PHP-FPM/FastCGI，不要把 PHP 内置开发服务器作为公网服务。项目支持两种网站根目录部署方式：
+生产环境使用 Nginx 或 Apache 配合 PHP-FPM，不要将 PHP 内置开发服务器用作公网服务。默认推荐把 `public/` 设为站点根目录；项目根目录模式用于无法更改站点目录的主机。两种模式都不要把网站根目录指向 `storage/`、`src/` 或 `templates/`。
 
-1. **项目根目录作为站点目录**：使用 `config/nginx-root.conf.example`，让请求经过根目录 `index.php`。这样 `/admin/`、`/docs/` 和图片接口都能正常转发，同时避免直接暴露源码目录。
-2. **`public/` 作为站点目录**：使用 `config/nginx.conf.example`，将站点根路径指向项目的 `public/`。Apache 和 IIS 可分别使用 `public/.htaccess` 和 `public/web.config`。
+### 选择 Web 根目录
 
-在宝塔中创建 PHP 站点后，按选定方式设置运行目录，配置 PHP 版本和数据库，再应用对应的 Nginx/Apache 规则。修改示例中的域名、项目绝对路径、PHP-FPM socket/端口、HTTPS 证书和上传限制。Nginx 不读取 `.htaccess`，必须在 Nginx 配置中加入示例的转发及目录保护规则。不要把站点根目录配置到 `storage/`、`src/` 或 `templates/`。
+- **Nginx，推荐 `public/` 根目录**：将站点根目录设为项目的 `public/`，参考 [config/nginx.conf.example](config/nginx.conf.example)。把 `fastcgi_pass` 改为主机上的 PHP-FPM socket 或 TCP 地址，并把示例路径和域名替换成实际值。Nginx 不读取 `.htaccess`，请在站点配置中保留示例里的入口重写、敏感路径屏蔽和 PHP 转发规则。
+- **Nginx，项目根目录**：参考 [config/nginx-root.conf.example](config/nginx-root.conf.example)，所有公开 URL 经项目根目录 `index.php` 路由。
+- **Apache，推荐 `public/` 根目录**：DocumentRoot 指向项目的 `public/`，启用 Apache 2.4 的 `mod_rewrite`，并让该目录允许读取 `.htaccess`。可参考 [config/apache-public-directory.example.conf](config/apache-public-directory.example.conf)；PHP-FPM 处理器由主机面板配置。
+- **Apache，项目根目录**：使用根目录 `.htaccess` 和 [config/apache-root-directory.example.conf](config/apache-root-directory.example.conf)。该模式依赖 Apache 2.4 的 `[END]` 重写标记。
+- **IIS**：`public/` 根目录使用 `public/web.config`，项目根目录使用根目录 `web.config`；IIS 需安装 URL Rewrite 和 PHP FastCGI。
 
-支持的服务器环境变量：
+### 宝塔面板部署步骤
 
-- `PICAPI_BASE_URL`：配置系统使用的公开站点基址。
-- `PICAPI_TRUSTED_PROXIES`：逗号分隔的可信反向代理 IP。
+以下以 Linux、域名 `example.com`、项目目录 `/www/wwwroot/example.com` 为例；按实际目录和 PHP 版本替换示例值。宝塔菜单会随版本略有调整，可参考官方的[添加 PHP 站点](https://docs.bt.cn/user-guide/site/php/create-web/)、[网站目录与运行目录](https://docs.bt.cn/user-guide/site/php/site-config/website-directory/)和[站点配置文件](https://docs.bt.cn/user-guide/site/php/site-config/config-file/)说明。
 
-环境变量由服务器或 PHP-FPM 提供；项目不会自动读取 `.env` 文件。
+1. 在“网站 → PHP项目 → 添加站点”添加域名和 PHP 版本；数据库可按需创建，SQLite 无需在宝塔另建数据库。上传并解压整个项目，保留隐藏文件（例如 `.htaccess`），不要只上传 `public/`。
+2. 点击站点域名进入“网站目录”，让最终 Web 根目录指向 `/www/wwwroot/example.com/public`。如果面板把“网站目录”和“运行目录”分开，网站目录填写 `/www/wwwroot/example.com`、运行目录选 `/public`；若可直接指定站点根目录，就直接填 `.../public`。这是 Nginx 和 Apache 共用的推荐布局。
+3. 在站点的 PHP 设置中选择 PHP 8.1 或更高版本，再到该 PHP 版本的扩展管理启用 `fileinfo`、`pdo_sqlite`；需要缩略图时启用 GD。若用 MySQL 等数据库，启用对应 PDO 扩展。
+4. 查看站点 PHP-FPM 池的 `user`/`group`（宝塔常见为 `www`，以实际配置为准），再将运行数据和图库授权给该账号。下面的命令把 `www:www` 替换成实际账号：
+
+   ```sh
+   chown -R www:www /www/wwwroot/example.com/storage
+   chown -R www:www /www/wwwroot/example.com/public/pc/img /www/wwwroot/example.com/public/m/img
+   find /www/wwwroot/example.com/storage -type d -exec chmod 750 {} +
+   find /www/wwwroot/example.com/storage -type f -exec chmod 640 {} +
+   find /www/wwwroot/example.com/public/pc/img /www/wwwroot/example.com/public/m/img -type d -exec chmod 755 {} +
+   find /www/wwwroot/example.com/public/pc/img /www/wwwroot/example.com/public/m/img -type f -exec chmod 644 {} +
+   ```
+
+   `storage/` 仅供 PHP 运行账号使用；图库是公开静态资源，目录需可遍历、图片需可读取。应用在 Linux 上新建图库目录时使用 `755`，新上传图片使用 `644`。不要对整个项目执行 `chmod -R 777`。
+5. 首次初始化时，PHP 还要在项目根目录创建并删除 `setup.txt`。若 PHP-FPM 不能写项目根目录，可临时把项目根目录所有者改为 PHP 运行账号并设为 `750`；完成初始化后恢复项目代码目录的部署所有者和只读权限。`storage/` 与图库目录的 PHP 写权限需持续保留。
+6. 按 Web 服务器类型配置站点：
+   - **宝塔 Nginx**：点击站点域名进入“配置文件”，套用 `config/nginx.conf.example` 的 server 规则，保留宝塔生成的 PHP-FPM 配置或将 `fastcgi_pass` 改为该站点 PHP 版本显示的 socket。确认 `root` 指向 `.../public`；图库 PHP 拦截规则要放在通用 PHP handler 前面。保存后用 `nginx -t` 检查，再重载 Nginx。
+   - **宝塔 Apache**：确认 Apache 2.4 的 `mod_rewrite` 已启用，并在站点设置中允许 `public/.htaccess` 生效；可将 `config/apache-public-directory.example.conf` 中的 `<Directory>` 配置加入站点配置。保留宝塔生成的 PHP-FPM/Handler 规则。
+7. 在“网站 → 设置 → SSL”申请或上传证书并启用 HTTPS。PHP 设置中建议关闭 `display_errors`、开启 `log_errors`；配置 `upload_max_filesize=55M`、`post_max_size=60M`、`max_execution_time=120`、`memory_limit=256M`，保存后重启站点使用的 PHP-FPM。Nginx 示例的 `client_max_body_size` 应不小于 `55m`。
+8. 打开 `https://example.com/admin/` 完成初始化并登录。若遇到 `Permission denied`，先检查报错路径的所有者是否是 PHP-FPM 用户、父目录是否可遍历，以及图库静态服务用户是否可读。
+
+宝塔的 PHP CLI 与 PHP-FPM 可能使用不同版本和 `php.ini`。计划任务若运行 `bin/daily-summary.php`，应选择与站点相同的 PHP 版本，例如 `/www/server/php/81/bin/php /www/wwwroot/example.com/bin/daily-summary.php`。
+
+宝塔的“防跨站攻击”会通过 `open_basedir` 限制 PHP 可访问路径。PicAPI 的 PHP 文件在 `public/` 外层的 `src/`、`templates/` 和 `storage/` 中；启用该功能时，允许路径必须包含整个项目目录和 PHP 临时目录，不能只允许 `public/`，否则会出现文件包含或读写权限错误。
+
+### 反向代理与域名
+
+通过反向代理或负载均衡访问时，应让代理覆盖并传递浏览器访问的域名和协议，例如 Nginx 代理可设置：
+
+```nginx
+proxy_set_header Host $http_host;
+proxy_set_header X-Forwarded-Host $http_host;
+proxy_set_header X-Forwarded-Proto $scheme;
+```
+
+代理到应用的 Nginx 配置也要把这两个头转交给 PHP（示例文件已经包含对应的 FastCGI 参数）。可信代理 IP 通过 `PICAPI_TRUSTED_PROXIES` 配置为逗号分隔列表。安装验证码、会话与 CSRF 校验按实际访问域名绑定；若上游把 Host 改为 `localhost`，必须传递公开域名头，不能用固定站点地址替代浏览器域名。
+
+`PICAPI_BASE_URL` 只用于生成网站地图等规范绝对链接，不用于验证码、会话或 CSRF 域名绑定。环境变量由服务器或 PHP-FPM 提供；项目不会自动读取 `.env` 文件。配置环境变量后重启 PHP-FPM。
 
 ## 维护与备份
 

@@ -17,12 +17,21 @@ server {
     location ~* ^/(?:src|templates|storage|database|config|tests|bin|demos|log|pc/log|m/log)(?:/|$) { deny all; }
     location ~ /\. { deny all; }
     location ~* \.(?:sqlite|sqlite3|db|jsonl|log|bak|lock|tmp)$ { deny all; }
+    # Only the generated per-category index.php is a PHP endpoint under the
+    # image tree; uploaded scripts must never be executed.
+    location ~* "^/(?:pc|m)/img/(?![a-z0-9][a-z0-9_-]{0,48}/index\.php$).+\.(?:php[0-9]?|phtml|phar)(?:/|$)" { deny all; }
 
     location / { try_files $uri $uri/ =404; }
     location ~ \.php$ {
         try_files $uri =404;
         include fastcgi_params;
         fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        # Preserve the browser-facing authority and TLS state for sessions,
+        # canonical URLs, and installations behind a trusted reverse proxy.
+        fastcgi_param HTTP_HOST $http_host;
+        fastcgi_param HTTPS $https if_not_empty;
+        fastcgi_param HTTP_X_FORWARDED_HOST $http_x_forwarded_host if_not_empty;
+        fastcgi_param HTTP_X_FORWARDED_PROTO $http_x_forwarded_proto if_not_empty;
         # Replace with your PHP-FPM socket or address.
         fastcgi_pass unix:/run/php/php-fpm.sock;
     }

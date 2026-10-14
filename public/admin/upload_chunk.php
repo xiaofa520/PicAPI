@@ -173,6 +173,7 @@ try {
                 $oldThumbnail = thumbnail_path($device, $category . '/' . $filename);
                 if (is_file($oldThumbnail)) @unlink($oldThumbnail);
             }
+            make_public_image_readable($targetDirectory . DIRECTORY_SEPARATOR . $filename);
             for ($part = 0; $part < $total; $part++) {
                 @unlink($chunkRoot . DIRECTORY_SEPARATOR . sprintf('%05d.part', $part));
             }

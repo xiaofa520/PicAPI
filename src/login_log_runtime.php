@@ -94,9 +94,24 @@ function login_log_records(int $limit = 5000, ?string $startDate = null, ?string
     $records = array_slice($records, 0, $limit, true);
     $rows = [];
     foreach ($records as $row) {
-        $rows[] = ['id' => count($rows) + 1, 'time' => (int) ($row['logged_at'] ?? 0) * 1000, 'account' => (string) ($row['account'] ?? ''), 'ip' => (string) ($row['ip'] ?? ''), 'result' => (string) ($row['result'] ?? 'failure'), 'device' => (string) ($row['device'] ?? ''), 'browser' => '', 'reason' => (string) ($row['reason'] ?? ''), 'source' => '服务器认证记录'];
+        $client = login_log_split_device_browser((string) ($row['device'] ?? ''));
+        $rows[] = ['id' => count($rows) + 1, 'time' => (int) ($row['logged_at'] ?? 0) * 1000, 'account' => (string) ($row['account'] ?? ''), 'ip' => (string) ($row['ip'] ?? ''), 'result' => (string) ($row['result'] ?? 'failure'), 'device' => $client['device'], 'browser' => $client['browser'], 'reason' => (string) ($row['reason'] ?? ''), 'source' => '服务器认证记录'];
     }
     return $rows;
+}
+
+/** @return array{device:string,browser:string} */
+function login_log_split_device_browser(string $label): array
+{
+    $parts = preg_split('/\s*·\s*/u', trim($label), 2);
+    if (is_array($parts) && count($parts) === 2) {
+        return [
+            'device' => trim($parts[1]) !== '' ? trim($parts[1]) : '未知系统',
+            'browser' => trim($parts[0]) !== '' ? trim($parts[0]) : '未知浏览器',
+        ];
+    }
+    if (trim($label) === '' || trim($label) === '未知设备') return ['device' => '未知系统', 'browser' => '未知浏览器'];
+    return ['device' => trim($label), 'browser' => '未知浏览器'];
 }
 
 /** @return list<string> */

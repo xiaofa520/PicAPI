@@ -27,7 +27,7 @@ $steps = [['数据库','连接数据存储'],['管理员','设置登录账号'],
   <title>初始化设置 · PicAPI</title><link rel="icon" href="assets/mark.svg">
   <link rel="stylesheet" href="assets/styles.css"><link rel="stylesheet" href="assets/studio.css"><link rel="stylesheet" href="assets/setup-page.css?v=setup-code-4">
   <link rel="stylesheet" href="assets/password-strength.css?v=2"><script src="assets/password-strength.js?v=2" defer></script>
-  <script src="assets/setup.js?v=setup-code-4" defer></script>
+  <script src="assets/setup.js?v=setup-code-8" defer></script>
 </head>
 <body class="setup-mode setup-install">
 <a class="skip-link" href="#setup-heading">跳到配置表单</a>
@@ -57,8 +57,8 @@ $steps = [['数据库','连接数据存储'],['管理员','设置登录账号'],
             </div>
             <p id="sqlite-hint" class="callout" hidden>SQLite 使用本地数据库文件，无需填写主机和账号。数据文件保存在受保护的数据库目录。</p>
             <div class="setup-code-block">
-              <?= setup_field('setup_code','本地验证码','','password',($setupCodeVerified ? 'autocomplete="off" placeholder="验证码已验证并删除"' : 'required autocomplete="off" placeholder="从项目根目录 setup.txt 复制粘贴"')) ?>
-              <small id="setup-code-status" data-state="<?= $setupCodeVerified ? 'verified' : 'idle' ?>" role="status"><?= $setupCodeVerified ? '本次初始化会话已验证，验证码文件已自动删除。' : '打开项目根目录的 setup.txt，粘贴后自动校验；验证成功后文件会自动删除。' ?></small>
+              <?= setup_field('setup_code','验证码','','password',($setupCodeVerified ? 'readonly autocomplete="off" placeholder="已验证"' : 'required autocomplete="off" placeholder="从项目根目录 setup.txt 复制粘贴"')) ?>
+              <small id="setup-code-status" data-state="<?= $setupCodeVerified ? 'verified' : 'idle' ?>" role="status"><?= $setupCodeVerified ? '此浏览器已验证，完成初始化后会自动移除验证码文件。' : '打开项目根目录的 setup.txt，粘贴后自动校验；完成初始化后会自动移除验证码文件。' ?></small>
             </div>
             <details class="setup-optional" <?= isset($_POST['redis_enabled']) ? 'open' : '' ?>><summary><?= setup_icon('chevron') ?>高级选项 · Redis</summary>
               <label class="setup-check"><input type="checkbox" name="redis_enabled" <?= isset($_POST['redis_enabled']) ? 'checked' : '' ?>>启用 Redis 缓存</label>

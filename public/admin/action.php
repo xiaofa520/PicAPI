@@ -95,6 +95,7 @@ function publish_uploaded_image(array $upload, string $category): string
     if (!move_uploaded_file((string) $upload['tmp_name'], $destination) && !copy((string) $upload['tmp_name'], $destination)) {
         throw new RuntimeException('Unable to store uploaded image.');
     }
+    make_public_image_readable($destination);
     $relative = $category === '' ? $filename : $category . '/' . $filename;
     record_upload_audit_safely($device, $relative, (int) $dimensions[0], (int) $dimensions[1], max(0, (int) filesize($destination)), 'form');
     return $device;
@@ -158,6 +159,7 @@ try {
                 if (!copy($_FILES['image']['tmp_name'], $directory . DIRECTORY_SEPARATOR . $filename)) {
                     throw new RuntimeException('图片写入失败。');
                 }
+                make_public_image_readable($directory . DIRECTORY_SEPARATOR . $filename);
                 $relative = $category === '' ? $filename : $category . '/' . $filename;
                 record_upload_audit_safely($device, $relative, (int) $dimensions[0], (int) $dimensions[1], max(0, (int) filesize($directory . DIRECTORY_SEPARATOR . $filename)), 'form');
                 $moved++;

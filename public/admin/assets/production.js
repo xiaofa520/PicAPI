@@ -317,7 +317,7 @@ function otherSettings(){
   const developerSettings=`<div class="settings-section developer-mode-settings"><h2>其他设置</h2><div class="other-settings-divider other-settings-divider-top" role="separator"></div>${checkbox('developer_mode','开发者模式',enabled,'用于运行检查、维护图库和恢复初始状态。')}${enabled?`<div class="developer-tools-grid"><article class="developer-tool"><h3>环境自检</h3><button class="button" type="button" data-action="developer-diagnostics">运行检查</button>${checks?`<div class="developer-check-list" aria-live="polite">${checks}</div>`:''}</article><article class="developer-tool"><h3>刷新图库索引</h3><p>重扫图片并更新缓存。</p><button class="button" type="button" data-action="developer-rebuild-index">重建索引</button></article><article class="developer-tool developer-tool-danger"><h3>恢复初始状态</h3><p>删除所有站点数据并重新初始化。</p><button class="button danger" type="button" data-action="developer-cleanup-open">${icon('trash')}恢复初始状态</button></article></div>`:''}<div class="other-settings-divider" role="separator"></div>${checkbox('force_admin_https','强制 HTTPS 访问后台',httpsEnabled,'启用前请确认站点已配置 HTTPS。')}</div>`;
   const updateSettings=`<div class="settings-section"><div class="online-update-settings"><div><h3>在线更新</h3><p>当前版本 <strong>v${escapeHTML(PICAPI_VERSION)}</strong> · 发现新版本后可自动安装。</p><a href="${PICAPI_REPOSITORY_URL}" target="_blank" rel="noopener noreferrer">PicAPI 开源仓库 ↗</a><small id="update-check-status" role="status" aria-live="polite">检查后会先询问，再自动备份和安装。</small></div><button class="button" type="button" data-action="check-updates">检查更新</button></div></div>`;
   return developerSettings+loginSessionSettingsMarkup()+updateSettings;
-}async function checkPicApiUpdates(button){
+}async function checkPicApiUpdates(triggerButton){
   const status=document.querySelector('#update-check-status');
   await perform(async()=>{
     if(status)status.textContent='正在检查 GitHub 版本…';
@@ -329,7 +329,7 @@ function otherSettings(){
       const body=`<div class="modal-body update-confirm-body"><p>当前版本 <strong>v${escapeHTML(info.current)}</strong>，可更新到 <strong>v${escapeHTML(info.latest)}</strong>。</p><p>确认后将进入更新页面，程序会自动备份并安装，图片、配置和日志会保留。</p>${notes?`<details><summary>查看更新说明</summary><pre>${escapeHTML(notes)}</pre></details>`:''}</div>`;
       openModal('发现新版本',body,button('稍后','close-modal','')+button('安装并自动更新','confirm-picapi-update','download',true));
     }catch(error){if(status)status.textContent=error.message;throw error;}
-  },button);
+  },triggerButton);
 }
 async function saveLogRetentionSetting(control){
   if(control.disabled)return;

@@ -209,7 +209,7 @@ function write_image_index(array $index): void
     $path = image_index_path();
     $temporary = $path . '.' . bin2hex(random_bytes(6)) . '.tmp';
     $encoded = json_encode($index, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    if (!is_string($encoded) || file_put_contents($temporary, $encoded, LOCK_EX) === false || !rename($temporary, $path)) {
+    if (!is_string($encoded) || @file_put_contents($temporary, $encoded, LOCK_EX) === false || !@rename($temporary, $path)) {
         @unlink($temporary);
     }
 }
@@ -591,7 +591,7 @@ function write_access_log(string $imagePath, int $status, string $outputType, in
     } catch (Throwable) {
         // The local JSONL log remains the portable fallback when database storage is unavailable.
     }
-    $written = file_put_contents(
+    $written = @file_put_contents(
         $directory . '/' . $time->format('d') . '.jsonl',
         json_encode($record, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . PHP_EOL,
         FILE_APPEND | LOCK_EX
@@ -684,7 +684,7 @@ function write_upload_audit_record(string $device, string $relativePath, int $wi
     }
     $directory = $root . '/' . $time->format('Y/m');
     ensure_directory($directory);
-    if (file_put_contents($directory . '/' . $time->format('d') . '.jsonl', json_encode($record, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . PHP_EOL, FILE_APPEND | LOCK_EX) === false) {
+    if (@file_put_contents($directory . '/' . $time->format('d') . '.jsonl', json_encode($record, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . PHP_EOL, FILE_APPEND | LOCK_EX) === false) {
         throw new RuntimeException('Unable to write upload audit log.');
     }
     try {
@@ -745,12 +745,12 @@ function seed_upload_audit_records(array $images): void
             }
             foreach ($batches as $path => $records) {
                 ensure_directory(dirname($path));
-                if (file_put_contents($path, implode(PHP_EOL, $records) . PHP_EOL, FILE_APPEND | LOCK_EX) === false) {
+                if (@file_put_contents($path, implode(PHP_EOL, $records) . PHP_EOL, FILE_APPEND | LOCK_EX) === false) {
                     throw new RuntimeException('Unable to seed upload audit log.');
                 }
             }
         }
-        file_put_contents($marker, json_encode(['seeded_at' => gmdate('c')], JSON_UNESCAPED_SLASHES), LOCK_EX);
+        @file_put_contents($marker, json_encode(['seeded_at' => gmdate('c')], JSON_UNESCAPED_SLASHES), LOCK_EX);
     } finally {
         flock($lock, LOCK_UN);
         fclose($lock);
@@ -866,7 +866,7 @@ function write_compatible_endpoint_log(array $record): void
         $record['method'],
         $record['type'],
     );
-    if (file_put_contents($directory . '/' . $time->format('d') . '.log', $entry, FILE_APPEND | LOCK_EX) === false) {
+    if (@file_put_contents($directory . '/' . $time->format('d') . '.log', $entry, FILE_APPEND | LOCK_EX) === false) {
         throw new RuntimeException('Unable to write compatible endpoint log.');
     }
 }
@@ -913,7 +913,7 @@ function persist_request_counter_compatibility_state(array $state): void
 {
     $path = STORAGE_DIR . '/counters.json';
     $temporary = $path . '.' . bin2hex(random_bytes(6)) . '.tmp';
-    if (file_put_contents($temporary, json_encode($state, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES), LOCK_EX) === false || !rename($temporary, $path)) {
+    if (@file_put_contents($temporary, json_encode($state, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES), LOCK_EX) === false || !@rename($temporary, $path)) {
         @unlink($temporary);
         throw new RuntimeException('Unable to persist call counter.');
     }
@@ -972,10 +972,10 @@ function increment_call_count(string $device): int
         $previousDeviceCount = max(0, (int) ($result['previous_device_count'] ?? 0));
         persist_request_counter_compatibility_state($stored);
 
-        if (file_put_contents(STORAGE_DIR . '/logs/' . endpoint_request_day() . '.count', (string) $stored['total'], LOCK_EX) === false) {
+        if (@file_put_contents(STORAGE_DIR . '/logs/' . endpoint_request_day() . '.count', (string) $stored['total'], LOCK_EX) === false) {
             throw new RuntimeException('Unable to write daily counter.');
         }
-        if (file_put_contents(STORAGE_DIR . '/logs/' . endpoint_request_day() . '.' . $device . '.count', (string) $stored['devices'][$device], LOCK_EX) === false) {
+        if (@file_put_contents(STORAGE_DIR . '/logs/' . endpoint_request_day() . '.' . $device . '.count', (string) $stored['devices'][$device], LOCK_EX) === false) {
             throw new RuntimeException('Unable to write endpoint daily counter.');
         }
         // Categories never create independent counters. Each request is merged
@@ -1018,7 +1018,7 @@ function endpoint_request_statistics(string $channel): array
                 if (!is_file($path)) {
                     ensure_directory(dirname($path));
                     $temporary = $path . '.' . bin2hex(random_bytes(6)) . '.tmp';
-                    if (file_put_contents($temporary, json_encode($stored, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES), LOCK_EX) === false || !rename($temporary, $path)) {
+                    if (@file_put_contents($temporary, json_encode($stored, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES), LOCK_EX) === false || !@rename($temporary, $path)) {
                         @unlink($temporary);
                     }
                 }
@@ -1109,7 +1109,7 @@ function increment_endpoint_request_counter(string $channel, ?int $previousCount
     $stored['updated_at'] = gmdate('c');
 
     $temporary = $path . '.' . bin2hex(random_bytes(6)) . '.tmp';
-    if (file_put_contents($temporary, json_encode($stored, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES), LOCK_EX) === false || !rename($temporary, $path)) {
+    if (@file_put_contents($temporary, json_encode($stored, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES), LOCK_EX) === false || !@rename($temporary, $path)) {
         @unlink($temporary);
         throw new RuntimeException('Unable to persist endpoint counter.');
     }
@@ -1121,24 +1121,24 @@ function increment_endpoint_request_counter(string $channel, ?int $previousCount
 function write_compatible_count_files(string $directory, int $count): void
 {
     ensure_directory($directory);
-    if (file_put_contents($directory . '/count.log', (string) max(0, $count), LOCK_EX) === false) {
+    if (@file_put_contents($directory . '/count.log', (string) max(0, $count), LOCK_EX) === false) {
         throw new RuntimeException('Unable to write compatible call count.');
     }
     $time = new DateTimeImmutable('now', new DateTimeZone('Asia/Shanghai'));
     $archiveDirectory = $directory . '/' . $time->format('Y/m');
     ensure_directory($archiveDirectory);
     $backup = $archiveDirectory . '/count_' . $time->format('Y-m-d') . '.bak';
-    if (file_put_contents($backup, (string) max(0, $count), LOCK_EX) === false) {
+    if (@file_put_contents($backup, (string) max(0, $count), LOCK_EX) === false) {
         throw new RuntimeException('Unable to write compatible count backup.');
     }
     $history = $directory . '/count_history.log';
     $entry = '[' . $time->format('Y-m-d H:i:s') . '] Count: ' . max(0, $count) . PHP_EOL;
-    if (file_put_contents($history, $entry, FILE_APPEND | LOCK_EX) === false) {
+    if (@file_put_contents($history, $entry, FILE_APPEND | LOCK_EX) === false) {
         throw new RuntimeException('Unable to write compatible count history.');
     }
     if (($size = @filesize($history)) !== false && $size > 262144) {
         $lines = file($history, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [];
-        if (count($lines) > 2000 && file_put_contents($history, implode(PHP_EOL, array_slice($lines, -2000)) . PHP_EOL, LOCK_EX) === false) {
+        if (count($lines) > 2000 && @file_put_contents($history, implode(PHP_EOL, array_slice($lines, -2000)) . PHP_EOL, LOCK_EX) === false) {
             throw new RuntimeException('Unable to trim compatible count history.');
         }
     }

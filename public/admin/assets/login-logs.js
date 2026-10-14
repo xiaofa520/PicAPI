@@ -27,7 +27,7 @@ function loginLogTableRows(rows){
     <td class="login-log-time"><time datetime="${new Date(row.time).toISOString()}">${loginLogClock.format(row.time)}</time></td>
     <td class="login-log-account"><span title="${escapeHTML(row.account)}">${escapeHTML(row.account)}</span></td>
     <td class="login-log-ip"><span class="login-log-label" aria-hidden="true">IP</span><span class="mono">${escapeHTML(row.ip)}</span></td>
-    <td class="login-log-device"><span class="login-log-label" aria-hidden="true">设备</span><span>${escapeHTML(row.device)}<small>${escapeHTML(row.browser)}</small></span></td>
+    <td class="login-log-device"><span class="login-log-label" aria-hidden="true">系统</span><span>${escapeHTML(row.device)}<small>${escapeHTML(row.browser)}</small></span></td>
     <td class="login-log-result">${loginLogBadge(row.result)}</td>
     <td class="login-log-reason">${escapeHTML(row.reason)}</td>
     <td class="login-log-action"><button class="text-button" data-login-log-detail="${row.id}" aria-label="查看 ${escapeHTML(row.account)} ${loginLogClock.format(row.time)} 的登录详情">详情 ${icon('chevron')}</button></td>
@@ -48,7 +48,7 @@ function loginLogsPage(){
       <button class="text-button" data-login-log-reset>${icon('filterClear')}清除筛选</button><button class="icon-button" data-login-log-refresh aria-label="刷新登录日志" title="刷新登录日志">${icon('refresh')}</button>
     </div>
     <div class="login-log-caption"><span>后台登录记录</span><small>北京时间</small></div>
-    <div class="login-log-viewport" role="region" aria-label="登录日志，可滚动浏览" tabindex="0"><table class="login-log-table"><caption class="visually-hidden">后台登录时间、账号、来源、设备、结果与原因</caption><thead><tr><th scope="col">登录时间</th><th scope="col">账号</th><th scope="col">来源 IP</th><th scope="col">设备 / 浏览器</th><th scope="col">登录结果</th><th scope="col">原因</th><th scope="col">操作</th></tr></thead><tbody id="login-log-rows">${loginLogTableRows(rows)}</tbody></table></div>
+    <div class="login-log-viewport" role="region" aria-label="登录日志，可滚动浏览" tabindex="0"><table class="login-log-table"><caption class="visually-hidden">后台登录时间、账号、来源、系统、浏览器、结果与原因</caption><thead><tr><th scope="col">登录时间</th><th scope="col">账号</th><th scope="col">来源 IP</th><th scope="col">系统 / 浏览器</th><th scope="col">登录结果</th><th scope="col">原因</th><th scope="col">操作</th></tr></thead><tbody id="login-log-rows">${loginLogTableRows(rows)}</tbody></table></div>
     <div class="login-log-footer" id="login-log-footer">${loginLogPagination(rows)}</div>`;
 }
 function refreshLoginLogResults(resetPage=true){
@@ -110,7 +110,7 @@ function clearLoginLogDateRange(){
 }
 function showLoginLogDetail(id){
   const row=loginLogRows.find(item=>item.id===id);if(!row)return;
-  const fields=[['登录时间',loginLogClock.format(row.time)],['登录账号',row.account],['来源 IP',row.ip],['设备',row.device],['浏览器',row.browser],['结果说明',row.reason],['记录来源',row.source]];
+  const fields=[['登录时间',loginLogClock.format(row.time)],['登录账号',row.account],['来源 IP',row.ip],['系统',row.device],['浏览器',row.browser],['结果说明',row.reason],['记录来源',row.source]];
   openModal('登录详情',`<div class="modal-body login-log-detail">${loginLogBadge(row.result)}<dl>${fields.map(([label,value])=>`<div><dt>${label}</dt><dd>${escapeHTML(value)}</dd></div>`).join('')}</dl><p class="modal-message">服务器记录，不包含密码。</p></div>`,button('关闭','close-modal',''));
 }
 document.addEventListener('input',event=>{
@@ -147,7 +147,7 @@ document.addEventListener('click',event=>{
   if(target.dataset.action==='export-login-logs'){
     const rows=filteredLoginLogs();if(!rows.length)return;
     const csvText=value=>/^[=+\-@\t\r]/.test(String(value))?"'"+value:value;
-    downloadCSV('登录日志.csv',[['登录时间（北京时间）','账号','来源 IP','设备','浏览器','登录结果','原因'],...rows.map(row=>[loginLogClock.format(row.time),csvText(row.account),row.ip,row.device,row.browser,loginLogResults[row.result],row.reason])]);
+    downloadCSV('登录日志.csv',[['登录时间（北京时间）','账号','来源 IP','系统','浏览器','登录结果','原因'],...rows.map(row=>[loginLogClock.format(row.time),csvText(row.account),row.ip,row.device,row.browser,loginLogResults[row.result],row.reason])]);
   }
 });
 

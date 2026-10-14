@@ -22,13 +22,11 @@ $stage = (string) ($_POST['test_stage'] ?? 'database');
 try {
     require_setup_draft($_POST);
     if ($stage === 'database') {
-        require_setup_code($_POST);
         unset($_SESSION['setup_connection_tests']);
         $result = prepare_setup_database($_POST, false);
         require_setup_draft($_POST);
         setup_connection_test_record($_POST, 'database');
     } elseif ($stage === 'redis') {
-        require_setup_code_verified();
         unset($_SESSION['setup_connection_tests']['redis']);
         if (!setup_connection_test_valid($_POST, 'database')) throw new InvalidArgumentException('请先测试数据库连接。');
         if (empty($_POST['redis_enabled'])) throw new InvalidArgumentException('Redis 尚未启用。');
@@ -40,11 +38,14 @@ try {
         throw new InvalidArgumentException('未知的连接测试阶段。');
     }
     require_setup_draft($_POST);
-    echo json_encode(['ok' => true, 'stage' => $stage, 'message' => $result['message'], 'created' => $result['created'], 'setupCodeVerified' => setup_code_is_verified()], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    $binding = setup_browser_binding_payload((string) ($_POST['setup_draft_token'] ?? ''));
+    echo json_encode(['ok' => true, 'stage' => $stage, 'message' => $result['message'], 'created' => $result['created'], 'csrf' => $binding['csrf'], 'setupDraftToken' => $binding['setupDraftToken']], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 } catch (SetupDraftExpiredException $exception) {
     http_response_code(419);
-    echo json_encode(['ok' => false, 'message' => $exception->getMessage(), 'setupCodeVerified' => setup_code_is_verified()], JSON_UNESCAPED_UNICODE);
+    $binding = setup_browser_binding_payload((string) ($_POST['setup_draft_token'] ?? ''));
+    echo json_encode(['ok' => false, 'message' => $exception->getMessage(), 'csrf' => $binding['csrf'], 'setupDraftToken' => $binding['setupDraftToken']], JSON_UNESCAPED_UNICODE);
 } catch (Throwable $exception) {
     $message = $exception instanceof InvalidArgumentException ? $exception->getMessage() : ($stage === 'redis' ? '数据库连接成功，但 Redis 测试失败，请检查主机、端口和密码。' : '数据库连接测试失败，请检查配置与数据库驱动。');
-    echo json_encode(['ok' => false, 'stage' => $stage, 'message' => $message, 'setupCodeVerified' => setup_code_is_verified()], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    $binding = setup_browser_binding_payload((string) ($_POST['setup_draft_token'] ?? ''));
+    echo json_encode(['ok' => false, 'stage' => $stage, 'message' => $message, 'csrf' => $binding['csrf'], 'setupDraftToken' => $binding['setupDraftToken']], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 }
