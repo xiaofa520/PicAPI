@@ -785,7 +785,16 @@ function list_upload_audit_records(int $limit = 5000, ?string $startDate = null,
         $relativeFile = str_replace('\\', '/', substr($path, strlen(rtrim($root, '\\/')) + 1));
         $fileDay = preg_replace('~^(\d{4})/(\d{2})/(\d{2})\.jsonl$~', '$1-$2-$3', $relativeFile);
         if (($startDate !== null && $fileDay < $startDate) || ($endDate !== null && $fileDay > $endDate)) continue;
-        if (count($records) >= $limit && $fileDay < substr($records[$limit - 1]['time'], 0, 10)) break;
+        if (count($records) >= $limit) {
+            // The database rows are sorted, but JSONL rows are appended in
+            // file order. Sort before using the oldest retained record as an
+            // early-stop cutoff so an exact-limit merge cannot skip a newer day.
+            usort($records, static fn(array $left, array $right): int => strcmp($right['time'], $left['time']));
+            $records = array_slice($records, 0, $limit);
+            $dedupe = [];
+            foreach ($records as $kept) $dedupe[$kept['time'] . '|' . $kept['device'] . '|' . $kept['relative']] = true;
+            if ($fileDay < substr($records[$limit - 1]['time'], 0, 10)) break;
+        }
         $handle = @fopen($path, 'rb');
         if ($handle === false) continue;
         while (($line = fgets($handle)) !== false) {

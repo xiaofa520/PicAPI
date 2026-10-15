@@ -40,6 +40,7 @@ if ($reset !== null && (int) ($reset['expires_at'] ?? 0) < time()) {
 }
 $showReset = isset($_GET['reset']) || $reset !== null;
 $loginIpBlocked = !$showReset && !empty($loginIpAccess['blocked']);
+$loginCsrf = csrf_token();
 $loginIpBlockMessage = '';
 if ($loginIpBlocked) {
     $loginIpBlockMessage = !empty($loginIpAccess['permanent'])
@@ -54,11 +55,14 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         $credentials = decrypt_login_transport_credentials((string) ($_POST['credentials'] ?? ''));
         if ($credentials === null) {
             // If Web Crypto is unavailable, accept the browser's native
-            // same-origin form submission. Its relative action follows the
-            // URL scheme used to open this page (HTTP or HTTPS).
+            // same-origin form submission only when the request is protected
+            // by HTTPS or is local development traffic.
             $plainUsername = $_POST['username'] ?? null;
             $plainPassword = $_POST['password'] ?? null;
             if (is_string($plainUsername) && is_string($plainPassword)) {
+                if (!request_is_https() && !request_is_loopback_client()) {
+                    abort_request(403, '登录凭据加密不可用，请使用 HTTPS 地址后重试。');
+                }
                 $credentials = ['username' => $plainUsername, 'password' => $plainPassword];
             }
         }

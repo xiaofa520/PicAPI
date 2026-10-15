@@ -29,9 +29,15 @@
     form.addEventListener('submit', async event => {
         if (form.dataset.encrypted === 'true') return;
         if (!window.crypto?.subtle) {
-            // Leave the native form submission in place. With no explicit
-            // action URL, the browser posts to this same URL and follows the
-            // scheme used to open the login page (HTTP or HTTPS).
+            const host = location.hostname.toLowerCase();
+            const loopback = host === 'localhost' || host.endsWith('.localhost')
+                || host === '::1' || host === '[::1]' || /^127(?:\.\d{1,3}){3}$/.test(host);
+            if (location.protocol !== 'https:' && !loopback) {
+                event.preventDefault();
+                alert('登录凭据加密不可用，请使用 HTTPS 地址后重试。');
+                return;
+            }
+            // Native submission is allowed only over HTTPS or loopback.
             form.dataset.encrypted = 'true';
             return;
         }

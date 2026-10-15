@@ -165,7 +165,8 @@ if ($root !== false && $legacyPath !== false && str_starts_with($legacyPath, $ro
 // If PHP extensions and ImageMagick are both unavailable, never send a large
 // original as a thumbnail. The workbench lazily converts the visible source
 // in the browser and stores the compact WebP through upload_thumbnail.php.
-if (max((int) $size[0], (int) $size[1]) <= 320) {
+$sourceSize = @getimagesize($source);
+if (is_array($sourceSize) && max((int) ($sourceSize[0] ?? 0), (int) ($sourceSize[1] ?? 0)) <= 320) {
     header('Content-Type: ' . (detect_image_mime($source) ?? 'application/octet-stream'));
     header('Cache-Control: private, max-age=86400');
     header('Content-Length: ' . filesize($source));
