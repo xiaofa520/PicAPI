@@ -27,7 +27,7 @@ $steps = [['数据库','连接数据存储'],['管理员','设置登录账号'],
   <title>初始化设置 · PicAPI</title><link rel="icon" href="assets/mark.svg">
   <link rel="stylesheet" href="assets/styles.css"><link rel="stylesheet" href="assets/studio.css"><link rel="stylesheet" href="assets/setup-page.css?v=setup-code-4">
   <link rel="stylesheet" href="assets/password-strength.css?v=2"><script src="assets/password-strength.js?v=2" defer></script>
-  <script src="assets/setup.js?v=setup-code-8" defer></script>
+  <script src="assets/setup.js?v=database-alias-scheme-9" defer></script>
 </head>
 <body class="setup-mode setup-install">
 <a class="skip-link" href="#setup-heading">跳到配置表单</a>

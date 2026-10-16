@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 define('APP_ROOT', dirname(__DIR__));
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.0.1';
 const PUBLIC_DIR = APP_ROOT . '/public';
 // Runtime data remains inside the project for portable local deployments.
 define('STORAGE_DIR', APP_ROOT . '/storage');
@@ -238,44 +238,11 @@ function request_is_loopback_client(): bool
         || (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false && str_starts_with($ip, '127.'));
 }
 
-function require_secure_admin_transport(): void
-{
-    if (request_is_https() || request_is_loopback_client()) return;
-
-    $method = strtoupper((string) ($_SERVER['REQUEST_METHOD'] ?? 'GET'));
-    $host = request_domain_binding();
-    $uri = (string) ($_SERVER['REQUEST_URI'] ?? '/admin/login.php');
-    if (in_array($method, ['GET', 'HEAD'], true)
-        && $host !== 'unknown'
-        && str_starts_with($uri, '/')
-        && preg_match('/[\r\n]/', $uri) !== 1) {
-        header('Cache-Control: no-store, max-age=0');
-        header('Location: https://' . $host . $uri, true, 302);
-        exit;
-    }
-
-    abort_request(403, '后台登录仅允许通过 HTTPS 访问。请使用 https:// 地址后重试。');
-}
-
-/**
- * Applies the administrator HTTPS policy from Settings > Security.
- *
- * The requirement is deliberately opt-in and defaults to off, so deployments
- * without a certificate (local development, intranets, plain shared hosts)
- * keep working unchanged until the administrator enables it.
- */
+/** Retained for older entry points; admin requests follow their current scheme. */
 function enforce_admin_transport_policy(): void
 {
-    try {
-        require_once __DIR__ . '/settings_runtime.php';
-        $settings = site_settings();
-        if (!empty($settings['force_admin_https'])) {
-            require_secure_admin_transport();
-        }
-    } catch (Throwable) {
-        // Unreadable settings must not block admin pages; the previous
-        // behavior (no forced transport) is kept in that rare case.
-    }
+    // No transport redirect is performed. Cookies and generated URLs use
+    // request_is_https() to follow the scheme used by the current request.
 }
 
 function application_base_url(): string
@@ -283,9 +250,8 @@ function application_base_url(): string
     $configured = trim((string) (getenv('PICAPI_BASE_URL') ?: ''));
     $configuredAuthority = $configured !== '' ? normalize_request_authority($configured) : null;
     if ($configuredAuthority !== null && !request_host_is_internal($configuredAuthority)) {
-        if (request_is_https() && str_starts_with(strtolower($configured), 'http://')) {
-            $configured = 'https://' . substr($configured, 7);
-        }
+        $scheme = request_is_https() ? 'https' : 'http';
+        $configured = preg_replace('~^https?://~i', $scheme . '://', $configured) ?? $configured;
         return rtrim($configured, '/');
     }
 

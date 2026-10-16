@@ -70,7 +70,6 @@ function default_site_settings(): array
         'upload_log_retention_months' => 12,
         'login_log_auto_cleanup' => false,
         'login_log_retention_months' => 12,
-        'force_admin_https' => false,
         'developer_mode' => false,
     ];
 }
@@ -139,7 +138,7 @@ function normalize_site_settings(array $source): array
         $value = (string) $value;
         $settings[$key] = strlen($value) <= 100_000 && trim($value) !== '' ? $value : $settings[$key];
     }
-    foreach (['login_notification', 'password_breach_alert', 'request_rate_alert', 'force_admin_https', 'developer_mode'] as $key) {
+    foreach (['login_notification', 'password_breach_alert', 'request_rate_alert', 'developer_mode'] as $key) {
         $settings[$key] = array_key_exists($key, $source)
             ? !empty($source[$key])
             : (bool) $settings[$key];
@@ -421,6 +420,39 @@ function purge_expired_login_logs(bool $force = false): int
     }
 }
 
+/** Read and validate the image directory in an ICO file. @return array{0:int,1:int}|null */
+function site_icon_ico_dimensions(string $path): ?array
+{
+    $fileSize = @filesize($path);
+    if (!is_int($fileSize) || $fileSize < 22 || $fileSize > 5 * 1024 * 1024) return null;
+    $file = @fopen($path, 'rb');
+    if ($file === false) return null;
+    try {
+        $header = fread($file, 6);
+        if (!is_string($header) || strlen($header) !== 6) return null;
+        $directory = unpack('vreserved/vtype/vcount', $header);
+        if (!is_array($directory) || $directory['reserved'] !== 0 || $directory['type'] !== 1 || $directory['count'] < 1 || $directory['count'] > 256) return null;
+        $tableSize = 6 + 16 * $directory['count'];
+        if ($fileSize < $tableSize) return null;
+        $entries = fread($file, 16 * $directory['count']);
+        if (!is_string($entries) || strlen($entries) !== 16 * $directory['count']) return null;
+        $firstDimensions = null;
+        for ($index = 0; $index < $directory['count']; $index++) {
+            $entry = unpack('Cwidth/Cheight/Ccolors/Creserved/vplanes/vbits/Vbytes/Voffset', substr($entries, $index * 16, 16));
+            if (!is_array($entry)) return null;
+            $width = $entry['width'] ?: 256;
+            $height = $entry['height'] ?: 256;
+            $offset = $entry['offset'];
+            $bytes = $entry['bytes'];
+            if ($entry['reserved'] !== 0 || $bytes < 1 || $offset < $tableSize || $offset > $fileSize || $bytes > $fileSize - $offset) return null;
+            if ($firstDimensions === null) $firstDimensions = [$width, $height];
+        }
+        return $firstDimensions;
+    } finally {
+        fclose($file);
+    }
+}
+
 /** @param array<string,mixed> $upload */
 function save_site_icon_upload(array $upload): void
 {
@@ -429,12 +461,14 @@ function save_site_icon_upload(array $upload): void
     }
     if ((int) ($upload['size'] ?? 0) > 5 * 1024 * 1024) throw new RuntimeException('站点图标不能超过 5 MB。');
     $temporary = (string) $upload['tmp_name'];
-    $dimensions = @getimagesize($temporary);
-    $mime = is_array($dimensions) ? (string) ($dimensions['mime'] ?? '') : '';
-    $extensions = ['image/jpeg' => 'jpg', 'image/png' => 'png', 'image/gif' => 'gif', 'image/webp' => 'webp'];
-    if (!isset($extensions[$mime])) throw new RuntimeException('站点图标仅支持 JPEG、PNG、GIF 或 WebP 图片。');
-    $width = (int) ($dimensions[0] ?? 0);
-    $height = (int) ($dimensions[1] ?? 0);
+    $icoDimensions = site_icon_ico_dimensions($temporary);
+    $dimensions = $icoDimensions === null ? @getimagesize($temporary) : null;
+    $mime = $icoDimensions !== null ? 'image/vnd.microsoft.icon' : (is_array($dimensions) ? (string) ($dimensions['mime'] ?? '') : '');
+    if ($icoDimensions === null && in_array($mime, ['image/vnd.microsoft.icon', 'image/x-icon', 'image/ico'], true)) throw new RuntimeException('ICO 图标文件无效。');
+    $extensions = ['image/jpeg' => 'jpg', 'image/png' => 'png', 'image/gif' => 'gif', 'image/webp' => 'webp', 'image/vnd.microsoft.icon' => 'ico'];
+    if (!isset($extensions[$mime])) throw new RuntimeException('站点图标仅支持 JPEG、PNG、GIF、WebP 或 ICO 图片。');
+    $width = (int) ($icoDimensions[0] ?? $dimensions[0] ?? 0);
+    $height = (int) ($icoDimensions[1] ?? $dimensions[1] ?? 0);
     if ($width < 1 || $height < 1 || $width > 4096 || $height > 4096) throw new RuntimeException('站点图标尺寸无效或过大。');
     $extension = $extensions[$mime];
     $staged = STORAGE_DIR . '/' . SITE_ICON_BASENAME . '-' . bin2hex(random_bytes(4)) . '.' . $extension;
@@ -450,7 +484,7 @@ function save_site_icon_upload(array $upload): void
 /** @param array<string,mixed> $original @param array<string,mixed> $compressed */
 function save_site_icon_upload_pair(array $original, array $compressed, bool $uploadedOnly = true): void
 {
-    $readUpload = static function (array $upload, string $label, int $maxBytes, array $allowedMimes) use ($uploadedOnly): array {
+    $readUpload = static function (array $upload, string $label, int $maxBytes, array $allowedMimes, bool $allowIco = false) use ($uploadedOnly): array {
         $temporary = (string) ($upload['tmp_name'] ?? '');
         if ((int) ($upload['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK || ($uploadedOnly ? !is_uploaded_file($temporary) : !is_file($temporary))) {
             throw new RuntimeException($label . '上传失败，请重新选择图片。');
@@ -459,20 +493,22 @@ function save_site_icon_upload_pair(array $original, array $compressed, bool $up
         if ($uploadSize < 1 || $uploadSize > $maxBytes) {
             throw new RuntimeException($label . '大小超出限制。');
         }
-        $dimensions = @getimagesize($temporary);
-        $mime = is_array($dimensions) ? (string) ($dimensions['mime'] ?? '') : '';
+        $icoDimensions = $allowIco ? site_icon_ico_dimensions($temporary) : null;
+        $dimensions = $icoDimensions === null ? @getimagesize($temporary) : null;
+        $mime = $icoDimensions !== null ? 'image/vnd.microsoft.icon' : (is_array($dimensions) ? (string) ($dimensions['mime'] ?? '') : '');
+        if ($allowIco && $icoDimensions === null && in_array($mime, ['image/vnd.microsoft.icon', 'image/x-icon', 'image/ico'], true)) throw new RuntimeException($label . ' ICO 文件无效。');
         if (!in_array($mime, $allowedMimes, true)) throw new RuntimeException($label . '格式不受支持。');
-        $width = (int) ($dimensions[0] ?? 0);
-        $height = (int) ($dimensions[1] ?? 0);
+        $width = (int) ($icoDimensions[0] ?? $dimensions[0] ?? 0);
+        $height = (int) ($icoDimensions[1] ?? $dimensions[1] ?? 0);
         if ($width < 1 || $height < 1 || $width > 8192 || $height > 8192) throw new RuntimeException($label . '尺寸无效或过大。');
         return [$mime, $width, $height];
     };
 
-    [$originalMime] = $readUpload($original, '网站图标原图', 5 * 1024 * 1024, ['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+    [$originalMime] = $readUpload($original, '网站图标原图', 5 * 1024 * 1024, ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/vnd.microsoft.icon'], true);
     [$compressedMime, $compressedWidth, $compressedHeight] = $readUpload($compressed, '网站图标压缩图', 1024 * 1024, ['image/png', 'image/webp']);
     if ($compressedWidth !== $compressedHeight || $compressedWidth > 512) throw new RuntimeException('压缩图必须是 512 像素以内的正方形图片。');
 
-    $extensions = ['image/jpeg' => 'jpg', 'image/png' => 'png', 'image/gif' => 'gif', 'image/webp' => 'webp'];
+    $extensions = ['image/jpeg' => 'jpg', 'image/png' => 'png', 'image/gif' => 'gif', 'image/webp' => 'webp', 'image/vnd.microsoft.icon' => 'ico'];
     $originalTarget = STORAGE_DIR . '/' . SITE_ICON_BASENAME . '-original.' . $extensions[$originalMime];
     $compressedTarget = STORAGE_DIR . '/' . SITE_ICON_BASENAME . '.' . ($compressedMime === 'image/webp' ? 'webp' : 'png');
     $nonce = bin2hex(random_bytes(6));
@@ -487,10 +523,10 @@ function save_site_icon_upload_pair(array $original, array $compressed, bool $up
         if (!$storeTemporary((string) $compressed['tmp_name'], $compressedStage)) throw new RuntimeException('无法暂存网站图标压缩图。');
         $existing = [];
         foreach (glob(STORAGE_DIR . '/' . SITE_ICON_BASENAME . '-original.*') ?: [] as $path) {
-            if (preg_match('/^site-icon-original\.(?:jpg|png|gif|webp)$/i', basename($path))) $existing[] = $path;
+            if (preg_match('/^site-icon-original\.(?:jpg|png|gif|webp|ico)$/i', basename($path))) $existing[] = $path;
         }
         foreach (glob(STORAGE_DIR . '/' . SITE_ICON_BASENAME . '.*') ?: [] as $path) {
-            if (preg_match('/^site-icon\.(?:jpg|png|gif|webp)$/i', basename($path))) $existing[] = $path;
+            if (preg_match('/^site-icon\.(?:jpg|png|gif|webp|ico)$/i', basename($path))) $existing[] = $path;
         }
         foreach (array_unique($existing) as $path) {
             $backup = $path . '.replace-' . $nonce;
@@ -558,7 +594,7 @@ function save_smtp_settings(array $input): void
 
 function site_icon_path(): ?string
 {
-    foreach (['webp', 'png', 'jpg', 'gif'] as $extension) {
+    foreach (['webp', 'png', 'jpg', 'gif', 'ico'] as $extension) {
         $path = STORAGE_DIR . '/' . SITE_ICON_BASENAME . '.' . $extension;
         if (is_file($path)) return $path;
     }
@@ -615,6 +651,7 @@ function output_site_favicon(): bool
         'jpg' => 'image/jpeg',
         'gif' => 'image/gif',
         'webp' => 'image/webp',
+        'ico' => 'image/vnd.microsoft.icon',
     ][strtolower((string) pathinfo($path, PATHINFO_EXTENSION))] ?? 'application/octet-stream';
     header('Content-Type: ' . $mime);
     header('Cache-Control: public, max-age=86400');

@@ -10,6 +10,7 @@ function default_category_request_alias(): string
 function save_default_category(string $name, string $alias): void
 {
     $name = trim($name); $alias = strtolower(trim($alias));
+    if ($alias === '') $alias = default_category_request_alias();
     if (!valid_category_name($name) || !valid_category($alias) || category_display_name_exists($name, 'default')) throw new InvalidArgumentException('分类名称或请求别名无效。');
     if (in_array($alias, ['json','url','image'], true)) throw new InvalidArgumentException('请求别名不能使用 json、url 或 image。');
     if ($alias !== 'default' && in_array($alias, all_categories(), true)) throw new InvalidArgumentException('请求别名已被使用。');

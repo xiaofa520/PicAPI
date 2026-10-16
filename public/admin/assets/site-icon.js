@@ -4,7 +4,7 @@ const siteIconSettings = {savedURL:'assets/mark.svg',draft:null,previewURL:null}
 const siteIconCrop = {file:null,image:null,width:0,height:0,url:null,stage:0,baseScale:1,scale:1,x:0,y:0,cropX:0,cropY:0,half:0,rotation:0,flip:false,pointers:new Map(),drag:null,frame:0};
 const SITE_ICON_MAX_BYTES=5*1024*1024,SITE_ICON_OUTPUT_SIZE=512,SITE_ICON_PAD=8,SITE_ICON_MIN_CROP=48;
 
-function siteIconSettingsMarkup(){return `<div class="field full"><label>网站图标</label><div class="site-icon-control"><img id="site-icon-preview" src="${escapeHTML(siteIconSettings.previewURL||siteIconSettings.savedURL)}" alt="网站图标预览" width="56" height="56"><div class="site-icon-fields"><div class="site-icon-actions"><button type="button" class="button" data-site-icon-choose>${icon('upload')}上传网站图标</button><button type="button" class="text-button" data-site-icon-reset ${siteIconSettings.draft?'':'hidden'}>恢复默认</button></div><input id="site-icon-file" type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden><small>支持 PNG、JPEG、GIF、WebP，原图最大 5 MB。选择后可调整裁剪范围，完成后自动保存。</small><small id="site-icon-status">${siteIconSettings.draft?'网站图标已上传':'未更换时使用默认 PicAPI 图标'}</small><small id="site-icon-error" class="site-icon-error" role="alert" hidden></small></div></div></div>`;}
+function siteIconSettingsMarkup(){return `<div class="field full"><label>网站图标</label><div class="site-icon-control"><img id="site-icon-preview" src="${escapeHTML(siteIconSettings.previewURL||siteIconSettings.savedURL)}" alt="网站图标预览" width="56" height="56"><div class="site-icon-fields"><div class="site-icon-actions"><button type="button" class="button" data-site-icon-choose>${icon('upload')}上传网站图标</button><button type="button" class="text-button" data-site-icon-reset ${siteIconSettings.draft?'':'hidden'}>恢复默认</button></div><input id="site-icon-file" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/x-icon,image/vnd.microsoft.icon,.ico" hidden><small>支持 PNG、JPEG、GIF、WebP、ICO，原图最大 5 MB。选择后可调整裁剪范围，完成后自动保存。</small><small id="site-icon-status">${siteIconSettings.draft?'网站图标已上传':'未更换时使用默认 PicAPI 图标'}</small><small id="site-icon-error" class="site-icon-error" role="alert" hidden></small></div></div></div>`;}
 
 function applySiteIcon(url){
   siteIconSettings.savedURL=url;try{siteIconSettings.draft=new URL(url,location.href).searchParams.has('custom')?true:null;}catch{siteIconSettings.draft=null;}
@@ -133,8 +133,8 @@ async function resetSiteIcon(){
 }
 function chooseSiteIconFile(file){
   if(!file)return;siteIconError('');
-  const ext=(file.name.split('.').pop()||'').toLowerCase(),types=['image/png','image/jpeg','image/gif','image/webp'];
-  if((!types.includes(file.type)&&!(file.type===''&&['png','jpg','jpeg','gif','webp'].includes(ext)))||file.size>SITE_ICON_MAX_BYTES){siteIconError('请选择不超过 5 MB 的 PNG、JPEG、GIF 或 WebP 图片。');return;}
+  const ext=(file.name.split('.').pop()||'').toLowerCase(),types=['image/png','image/jpeg','image/gif','image/webp','image/x-icon','image/vnd.microsoft.icon'];
+  if((!types.includes(file.type)&&!(file.type===''&&['png','jpg','jpeg','gif','webp','ico'].includes(ext))&&ext!=='ico')||file.size>SITE_ICON_MAX_BYTES){siteIconError('请选择不超过 5 MB 的 PNG、JPEG、GIF、WebP 或 ICO 图片。');return;}
   const url=URL.createObjectURL(file),image=new Image();image.onload=()=>{const {width,height}=siteIconDims(image);if(!width||!height||width>8192||height>8192){URL.revokeObjectURL(url);siteIconError('图片尺寸无效或超过 8192 像素。');return;}openSiteIconCrop(file,image,url);};image.onerror=()=>{URL.revokeObjectURL(url);siteIconError('图片无法读取，或文件已经损坏。');};image.src=url;
 }
 

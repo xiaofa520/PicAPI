@@ -219,6 +219,6 @@ $siteName = (string) ($settings['site_name'] ?? 'PicAPI');
       <p class="update-note">请保持此页面开启，直到更新结果显示完成。</p>
     </div>
   </main>
-  <script src="assets/update.js?v=automatic-update-2" defer></script>
+  <script src="assets/update.js?v=request-scheme-3" defer></script>
 </body>
 </html>

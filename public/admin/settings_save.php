@@ -14,7 +14,6 @@ try {
         $_POST['login_notification'] = isset($_POST['login_notification']) ? '1' : '';
         $_POST['password_breach_alert'] = isset($_POST['password_breach_alert']) ? '1' : '';
         $_POST['request_rate_alert'] = isset($_POST['request_rate_alert']) ? '1' : '';
-        $_POST['force_admin_https'] = isset($_POST['force_admin_https']) ? '1' : '';
     }
     save_site_settings(array_replace(site_settings(), $_POST));
     $smtpFields = ['smtp_host', 'smtp_port', 'smtp_username', 'smtp_password', 'smtp_encryption'];

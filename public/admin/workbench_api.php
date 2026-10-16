@@ -8,6 +8,7 @@ require_once __DIR__ . '/../../src/api_config_runtime.php';
 require_once __DIR__ . '/../../src/api_docs_runtime.php';
 require_once __DIR__ . '/../../src/developer_tools_runtime.php';
 require_once __DIR__ . '/../../src/update_runtime.php';
+require_once __DIR__ . '/../../src/setup_runtime.php';
 initialize_storage();
 $admin = require_admin();
 send_admin_security_headers();
@@ -27,6 +28,49 @@ function workbench_library(): array
         $categories[] = ['name' => $names[$alias] ?? $alias, 'alias' => $alias === 'default' ? default_category_request_alias() : $alias, 'storageAlias' => $alias, 'default' => $alias === 'default', 'count' => count($items), 'pc' => count(array_filter($items, static fn(array $item): bool => $item['device'] === 'pc')), 'mobile' => count(array_filter($items, static fn(array $item): bool => $item['device'] === 'mobile')), 'cover' => []];
     }
     return compact('images', 'categories');
+}
+
+/** @return array{enabled:bool,host:string,hasPassword:bool} */
+function workbench_redis_settings(): array
+{
+    $installation = installation_config() ?? [];
+    $redis = is_array($installation['redis'] ?? null) ? $installation['redis'] : [];
+    return [
+        'enabled' => !empty($redis['enabled']),
+        'host' => trim((string) ($redis['host'] ?? '127.0.0.1')) ?: '127.0.0.1',
+        'hasPassword' => (string) ($redis['password'] ?? '') !== '',
+    ];
+}
+
+/** @param array<string,mixed> $payload @return array{enabled:bool,host:string,hasPassword:bool} */
+function workbench_save_redis_settings(array $payload): array
+{
+    $installation = installation_config();
+    if (!is_array($installation)) throw new RuntimeException('安装配置不可用。');
+    $current = is_array($installation['redis'] ?? null) ? $installation['redis'] : [];
+    $enabledValue = $payload['enabled'] ?? false;
+    if (!is_bool($enabledValue)) throw new InvalidArgumentException('Redis 启用状态无效。');
+    $enabled = $enabledValue;
+    if (isset($payload['host']) && !is_string($payload['host'])) throw new InvalidArgumentException('Redis 主机地址无效。');
+    $host = trim((string) ($payload['host'] ?? '')) ?: '127.0.0.1';
+    if (strlen($host) > 255) throw new InvalidArgumentException('Redis 主机地址不能超过 255 个字符。');
+
+    $password = (string) ($current['password'] ?? '');
+    if (isset($payload['clearPassword']) && !is_bool($payload['clearPassword'])) throw new InvalidArgumentException('Redis 密码操作无效。');
+    if (!empty($payload['clearPassword'])) {
+        $password = '';
+    } elseif (array_key_exists('password', $payload)) {
+        if (!is_string($payload['password'])) throw new InvalidArgumentException('Redis 密码无效。');
+        if ($payload['password'] !== '') $password = $payload['password'];
+    }
+    if (strlen($password) > 4096) throw new InvalidArgumentException('Redis 密码长度超出限制。');
+
+    if ($enabled) test_setup_redis(['redis_enabled' => true, 'redis_host' => $host, 'redis_password' => $password]);
+
+    $installation['redis'] = ['enabled' => $enabled, 'host' => $host, 'password' => $password];
+    save_installation_config($installation);
+    invalidate_image_index();
+    return workbench_redis_settings();
 }
 
 /** @return array{?string,?string} */
@@ -74,6 +118,7 @@ try {
                 if (array_key_exists('upload_log_auto_cleanup', $changes) || array_key_exists('upload_log_retention_months', $changes)) purge_expired_upload_audit_logs(true);
                 if (array_key_exists('login_log_auto_cleanup', $changes) || array_key_exists('login_log_retention_months', $changes)) purge_expired_login_logs(true);
                 break;
+            case 'redis-settings': $operationResult = workbench_save_redis_settings($payload); break;
             case 'developer-cleanup':
                 $operationResult = clear_developer_test_data((string) ($payload['confirmation'] ?? ''));
                 $operationMessage = '已恢复初始状态，请重新初始化';
@@ -138,7 +183,7 @@ try {
                 $account = admin_account_by_identity($admin);
                 $smtp = smtp_settings(); unset($smtp['password']);
                 $pending = $_SESSION['admin_email_change'] ?? null;
-                return ['settings' => site_settings(), 'smtp' => $smtp, 'profile' => ['name' => $admin, 'email' => $account['email'] ?? '', 'avatar' => admin_avatar_url() ?? ''], 'emailPending' => is_array($pending) && ($pending['expires_at'] ?? 0) > time(), 'favicon' => site_favicon_url(), 'policies' => security_policy_configuration(), 'entries' => security_entries()];
+                return ['settings' => site_settings(), 'redis' => workbench_redis_settings(), 'smtp' => $smtp, 'profile' => ['name' => $admin, 'email' => $account['email'] ?? '', 'avatar' => admin_avatar_url() ?? ''], 'emailPending' => is_array($pending) && ($pending['expires_at'] ?? 0) > time(), 'favicon' => site_favicon_url(), 'policies' => security_policy_configuration(), 'entries' => security_entries()];
             })(),
             default => throw new InvalidArgumentException('不支持同步此页面。'),
         };
@@ -150,7 +195,7 @@ try {
         $pending = $_SESSION['admin_email_change'] ?? null;
         $databaseDriver = '不可用';
         try { $databaseDriver = (string) admin_database_connection()->getAttribute(PDO::ATTR_DRIVER_NAME); } catch (Throwable) {}
-        $result = workbench_library() + ['csrf' => csrf_token(), 'favicon' => site_favicon_url(), 'baseURL' => application_base_url(), 'settings' => site_settings(), 'smtp' => $smtp, 'profile' => ['name' => $admin, 'email' => $account['email'] ?? '', 'avatar' => admin_avatar_url() ?? ''], 'emailPending' => is_array($pending) && ($pending['expires_at'] ?? 0) > time(), 'statistics' => dashboard_statistics(), 'policies' => security_policy_configuration(), 'entries' => security_entries(), 'api' => api_configuration(), 'docs' => api_docs_configuration(), 'docsDefaultMarkdown' => default_api_docs_markdown(), 'docsRequestStatistics' => api_docs_request_statistics(), 'docsVisitStatistics' => api_docs_visit_statistics(false), 'environment' => ['PHP' => PHP_VERSION, '数据库' => $databaseDriver, 'GD' => extension_loaded('gd') ? '已启用' : '未安装', 'HTTPS' => request_is_https() ? '已启用' : '未启用', '存储目录' => is_writable(STORAGE_DIR) ? '可写' : '不可写']];
+        $result = workbench_library() + ['csrf' => csrf_token(), 'favicon' => site_favicon_url(), 'baseURL' => application_base_url(), 'settings' => site_settings(), 'redis' => workbench_redis_settings(), 'smtp' => $smtp, 'profile' => ['name' => $admin, 'email' => $account['email'] ?? '', 'avatar' => admin_avatar_url() ?? ''], 'emailPending' => is_array($pending) && ($pending['expires_at'] ?? 0) > time(), 'statistics' => dashboard_statistics(), 'policies' => security_policy_configuration(), 'entries' => security_entries(), 'api' => api_configuration(), 'docs' => api_docs_configuration(), 'docsDefaultMarkdown' => default_api_docs_markdown(), 'docsRequestStatistics' => api_docs_request_statistics(), 'docsVisitStatistics' => api_docs_visit_statistics(false), 'environment' => ['PHP' => PHP_VERSION, '数据库' => $databaseDriver, 'GD' => extension_loaded('gd') ? '已启用' : '未安装', 'HTTPS' => request_is_https() ? '已启用' : '未启用', '存储目录' => is_writable(STORAGE_DIR) ? '可写' : '不可写']];
     } else throw new InvalidArgumentException('请求不存在。');
     echo json_encode(['ok' => true] + $result, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
 } catch (Throwable $error) {

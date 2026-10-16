@@ -3,7 +3,7 @@ try{sessionStorage.removeItem('picapi-setup-draft-v1');}catch{}
 
 // Server-backed workbench. Rendering modules contain no server credentials.
 const context=JSON.parse(document.querySelector('#workbench-context').textContent);
-let serverData=null,csrf=context.csrf,uploadBusy=false,pendingUploadConflictResolver=null,uploadThumbnailQueue=Promise.resolve();
+let serverData=null,csrf=context.csrf,uploadBusy=false,pendingUploadConflictResolver=null,uploadThumbnailQueue=Promise.resolve(),uploadQueueEntrySequence=0;
 let developerDiagnostics=[];
 const PICAPI_REPOSITORY_URL='https://github.com/xiaofa520/PicAPI';
 const PICAPI_VERSION=document.body.dataset.appVersion||'1.0.0';
@@ -30,6 +30,28 @@ async function requestJSON(url,body=null,options={}){
   if(data.csrf)csrf=data.csrf;
   if(body)announceLiveMutation();
   return data;
+}
+function requestJSONWithUploadProgress(url,body,{signal,onProgress}={}){
+  return new Promise((resolve,reject)=>{
+    const request=new XMLHttpRequest();let settled=false;
+    const finish=(callback,value)=>{if(settled)return;settled=true;signal?.removeEventListener('abort',abort);callback(value);};
+    const abort=()=>request.abort();
+    request.open('POST',adminRequestURL(url),true);request.withCredentials=true;request.setRequestHeader('Accept','application/json');
+    request.upload.addEventListener('progress',event=>{if(event.lengthComputable)onProgress?.(Math.max(0,Math.min(1,event.loaded/event.total)));});
+    request.addEventListener('load',()=>{
+      if(request.responseURL&&/\/login\.php(?:[?#]|$)/i.test(request.responseURL)){location.href='login.php';finish(reject,new Error('登录已过期'));return;}
+      const type=request.getResponseHeader('content-type')||'';
+      if(!type.includes('application/json')){finish(reject,new Error(request.status===403?'验证已失效，请刷新后重试':'服务器未返回有效数据'));return;}
+      let data;try{data=JSON.parse(request.responseText);}catch{finish(reject,new Error('服务器未返回有效数据'));return;}
+      if(request.status<200||request.status>=300||data.ok===false){const error=new Error(data.message||'操作失败');error.status=request.status;error.data=data;finish(reject,error);return;}
+      if(data.csrf)csrf=data.csrf;announceLiveMutation();finish(resolve,data);
+    });
+    request.addEventListener('error',()=>finish(reject,new Error('网络连接中断，请检查网络后重试')));
+    request.addEventListener('abort',()=>finish(reject,new DOMException('','AbortError')));
+    if(signal?.aborted){finish(reject,new DOMException('','AbortError'));return;}
+    signal?.addEventListener('abort',abort,{once:true});
+    try{request.send(body);}catch(error){finish(reject,error);}
+  });
 }
 function formBody(values={}){const form=new FormData();form.set('csrf',csrf);Object.entries(values).forEach(([key,value])=>{if(Array.isArray(value))value.forEach(item=>form.append(key+'[]',item));else form.set(key,value);});return form;}
 function apiRequest(operation,payload){return requestJSON('workbench_api.php?op='+encodeURIComponent(operation),payload===undefined?null:formBody({payload:JSON.stringify(payload)}));}
@@ -186,21 +208,28 @@ function preview(id){
   openModal('图片详情',`<div class="preview-content"><div class="preview-image"><img src="${escapeHTML(item.url)}" alt="${escapeHTML(item.original)}"></div><div class="preview-details"><h3>${escapeHTML(item.original)}</h3>${[['尺寸',item.width+' × '+item.height],['文件大小',formatLibraryStorage(item.size).value+' '+formatLibraryStorage(item.size).unit],['所属图库',item.device==='pc'?'PC':'手机'],['分类',item.category],['文件日期',item.date]].map(([label,value])=>`<div class="detail-row"><span>${label}</span><strong>${escapeHTML(value)}</strong></div>`).join('')}${button('复制图片地址','copy-preview','copy',true,`data-id="${id}"`)}</div></div>`,'','preview-dialog');
 }
 
+function uploadProgressValue(file){return Math.max(0,Math.min(100,Math.round(file.done?100:Number(file.progress)||0)));}
+function uploadProgressStatus(file){
+  if(file.skipped)return '已跳过';
+  if(file.done)return '已上传';
+  if(file.error)return file.error;
+  if(file.waitingConflict)return '等待确认';
+  const progress=uploadProgressValue(file);
+  return file.uploading?`${Math.max(1,progress)}%`:progress?`${progress}%`:'等待上传';
+}
 function upload(){
-  return `${head('upload',button('查看图库','goto-gallery','image'))}<section class="panel"><div class="panel-body"><div class="dropzone" id="dropzone"><span class="upload-icon">${icon('cloud')}</span><h2>将图片拖到这里</h2><p>JPG、PNG、GIF、WebP · 每张最大 50 MB</p><div class="actions">${button('选择图片','pick-files','plus',true)}${button('选择文件夹','pick-folder','folder')}</div><input id="file-input" class="file-input" type="file" accept="image/jpeg,image/png,image/gif,image/webp" multiple><input id="folder-input" class="file-input" type="file" accept="image/*" multiple webkitdirectory></div><div class="upload-options"><div class="field"><label for="upload-category">上传到分类</label><select id="upload-category">${categories.map(c=>`<option value="${escapeHTML(c.storageAlias)}" ${state.uploadCategory===c.storageAlias?'selected':''}>${escapeHTML(c.name)}</option>`).join('')}</select></div><div class="field"><label for="upload-device">设备类型</label><select id="upload-device"><option value="auto">根据图片方向自动识别</option><option value="pc" ${state.uploadDevice==='pc'?'selected':''}>PC</option><option value="mobile" ${state.uploadDevice==='mobile'?'selected':''}>手机</option></select></div></div><div class="section-title"><h3>上传队列 ${state.uploaded.length}</h3>${button('清空队列','clear-upload','close',false,uploadBusy?'disabled':'')}</div><div class="upload-list">${state.uploaded.map((file,index)=>`<div class="upload-row ${file.uploading?'is-uploading':''}"><img src="${escapeHTML(file.url)}" alt="待上传图片"><div><strong>${escapeHTML(file.resultName||file.name)}</strong><small>${(file.size/1048576).toFixed(1)} MB</small></div><span class="chip ${file.done?'success':''}">${file.skipped?'已跳过':file.done?'已上传':file.error?escapeHTML(file.error):file.progress?file.progress+'%':'等待上传'}</span><button class="icon-button" data-remove-upload="${index}" aria-label="移除 ${escapeHTML(file.name)}" ${file.waitingConflict?'disabled':''}>${icon('close')}</button></div>`).join('')||'<p class="muted">选择图片后开始上传。</p>'}</div><div class="upload-footer"><span>分片上传 · 同名图片会先确认处理方式</span>${button('开始上传','start-upload','upload',true,uploadBusy||!state.uploaded.some(file=>!file.done)?'disabled':'')}</div></div></section>`;
+  return `${head('upload',button('查看图库','goto-gallery','image'))}<section class="panel"><div class="panel-body"><div class="dropzone" id="dropzone"><span class="upload-icon">${icon('cloud')}</span><h2>将图片拖到这里</h2><p>JPG、PNG、GIF、WebP · 每张最大 50 MB</p><div class="actions">${button('选择图片','pick-files','plus',true)}${button('选择文件夹','pick-folder','folder')}</div><input id="file-input" class="file-input" type="file" accept="image/jpeg,image/png,image/gif,image/webp" multiple><input id="folder-input" class="file-input" type="file" accept="image/*" multiple webkitdirectory></div><div class="upload-options"><div class="field"><label for="upload-category">上传到分类</label><select id="upload-category">${categories.map(c=>`<option value="${escapeHTML(c.storageAlias)}" ${state.uploadCategory===c.storageAlias?'selected':''}>${escapeHTML(c.name)}</option>`).join('')}</select></div><div class="field"><label for="upload-device">设备类型</label><select id="upload-device"><option value="auto">根据图片方向自动识别</option><option value="pc" ${state.uploadDevice==='pc'?'selected':''}>PC</option><option value="mobile" ${state.uploadDevice==='mobile'?'selected':''}>手机</option></select></div></div><div class="section-title"><h3>上传队列 ${state.uploaded.length}</h3>${button('清空队列','clear-upload','close',false,uploadBusy?'disabled':'')}</div><div class="upload-list" id="upload-list">${state.uploaded.map((file,index)=>`<div class="upload-row ${file.uploading?'is-uploading':''}" data-upload-row="${Number(file.queueId)}"><img src="${escapeHTML(file.url)}" alt="待上传图片"><div><strong>${escapeHTML(file.resultName||file.name)}</strong><small>${(file.size/1048576).toFixed(1)} MB</small></div><span class="chip upload-progress-label ${file.done&&!file.skipped?'success':''}">${escapeHTML(uploadProgressStatus(file))}</span><button class="icon-button" data-remove-upload="${index}" aria-label="移除 ${escapeHTML(file.name)}" ${file.waitingConflict?'disabled':''}>${icon('close')}</button></div>`).join('')||'<p class="muted">选择图片后开始上传。</p>'}</div><div class="upload-footer"><span>分片上传 · 同名图片会先确认处理方式</span>${button('开始上传','start-upload','upload',true,uploadBusy||!state.uploaded.some(file=>!file.done)?'disabled':'')}</div></div></section>`;
 }
 async function addFiles(fileList){
   const files=Array.from(fileList||[]);if(!files.length)return;
-  if(pendingUploadConflictResolver){const resolve=pendingUploadConflictResolver;pendingUploadConflictResolver=null;closeModal();resolve(null);}
-  for(const entry of state.uploaded){if(entry.uploading)entry.abortController?.abort();if(entry.url)URL.revokeObjectURL(entry.url);}
-  state.uploaded=[];
-  let skipped=0;
+  let skipped=0,added=0;
   for(const file of files){
     if(!['image/jpeg','image/png','image/gif','image/webp'].includes(file.type)||file.size>50*1048576||!file.size){skipped++;continue;}
-    const url=URL.createObjectURL(file);localFileURLs.push(url);state.uploaded.push({file,url,name:file.name,size:file.size,done:false,progress:0});
+    const url=URL.createObjectURL(file);localFileURLs.push(url);state.uploaded.push({queueId:++uploadQueueEntrySequence,file,url,name:file.name,size:file.size,done:false,progress:0});added++;
   }
   if(skipped)toast(`已跳过 ${skipped} 个不支持或超过 50 MB 的文件`);
-  render();
+  if(added&&uploadBusy)toast(`已将 ${added} 张图片加入上传队列`);
+  if(state.page==='upload')renderUploadQueue();else render();
 }
 function canonicalUploadName(file){
   const name=String(file.name||'').split(/[\\/]/).pop(),stem=name.replace(/\.[^.]*$/,'')||name;
@@ -234,20 +263,17 @@ async function preflightUploadConflicts(entries,category,device,batch){
   }
   return true;
 }
-function renderUploadQueue(followActive=false){
-  const before=document.querySelector('.upload-list'),scrollTop=before?.scrollTop||0;
+function updateUploadRowProgress(entry){
+  const row=main.querySelector(`.upload-row[data-upload-row="${Number(entry.queueId)}"]`);if(!row)return;
+  const label=row.querySelector('.upload-progress-label');
+  if(label){label.textContent=uploadProgressStatus(entry);label.className=`chip upload-progress-label ${entry.done&&!entry.skipped?'success':''}`;}
+  row.classList.toggle('is-uploading',Boolean(entry.uploading));
+}
+function renderUploadQueue(){
+  const before=document.querySelector('.upload-list'),listScrollTop=before?.scrollTop||0,mainScrollTop=main.scrollTop,windowScrollTop=window.scrollY,windowScrollLeft=window.scrollX;
   render();
-  const list=document.querySelector('.upload-list');if(!list)return;
-  list.scrollTop=scrollTop;
-  if(!followActive)return;
-  requestAnimationFrame(()=>{
-    const currentList=document.querySelector('.upload-list'),row=currentList?.querySelector('.upload-row.is-uploading');if(!currentList||!row)return;
-    const listRect=currentList.getBoundingClientRect(),rowRect=row.getBoundingClientRect(),padding=12;
-    let target=currentList.scrollTop;
-    if(rowRect.top<listRect.top+padding)target-=listRect.top+padding-rowRect.top;
-    else if(rowRect.bottom>listRect.bottom-padding)target+=rowRect.bottom-listRect.bottom+padding;
-    if(target!==currentList.scrollTop)currentList.scrollTop=Math.max(0,target);
-  });
+  main.scrollTop=mainScrollTop;window.scrollTo({top:windowScrollTop,left:windowScrollLeft,behavior:'instant'});
+  const list=document.querySelector('.upload-list');if(list)list.scrollTop=Math.min(listScrollTop,Math.max(0,list.scrollHeight-list.clientHeight));
 }
 async function saveUploadThumbnail(file,device,relative){
   const image=await createImageBitmap(file),scale=Math.min(1,320/Math.max(image.width,image.height)),canvas=document.createElement('canvas');
@@ -264,33 +290,43 @@ function uploadChunkSize(fileSize){
 async function uploadQueue(){
   if(uploadBusy)return;uploadBusy=true;
   const category=document.querySelector('#upload-category').value,device=document.querySelector('#upload-device').value;
-  const batch={action:null};
+  const batch={action:null},processed=new Set();
   try{
     const pending=state.uploaded.filter(file=>!file.done);
     if(!await preflightUploadConflicts(pending,category,device,batch)){toast('已取消本次上传');return;}
-    for(const entry of pending.filter(file=>!file.done)){
-      if(!state.uploaded.includes(entry))continue;
-      entry.error='';entry.uploading=true;if(state.page==='upload')renderUploadQueue(true);const id=Array.from(crypto.getRandomValues(new Uint8Array(16)),byte=>byte.toString(16).padStart(2,'0')).join('');entry.uploadId=id;entry.abortController=new AbortController();
-      const size=uploadChunkSize(entry.size),total=Math.ceil(entry.size/size);let index=0,conflictAction=entry.conflictAction||'prompt';
-      try{while(index<total){
-        const data=formBody({upload_id:id,index,total,category,device:entry.targetDevice||device,conflict_action:conflictAction});data.append('chunk',entry.file.slice(index*size,(index+1)*size),entry.name);
-        let response;
-        try{response=await requestJSON('upload_chunk.php',data,{signal:entry.abortController.signal});}catch(error){
-          if(error.status===409&&error.data?.conflict){
-            entry.waitingConflict=true;if(state.page==='upload')renderUploadQueue(false);let choice=batch.action;
-            if(!choice){const selected=await duplicateChoice(entry,{filename:error.data.filename,url:error.data.server_image_url});if(selected){choice=selected.choice;if(selected.applyToBatch)batch.action=choice;}}
-            entry.waitingConflict=false;if(state.page==='upload')renderUploadQueue(false);
-            if(!choice)throw new Error('已取消同名图片处理');conflictAction=choice;continue;
+    const drainQueue=async()=>{
+      for(let queueIndex=0;queueIndex<state.uploaded.length;queueIndex++){
+        const entry=state.uploaded[queueIndex];
+        if(entry.done||processed.has(entry))continue;
+        processed.add(entry);
+        if(!state.uploaded.includes(entry))continue;
+        entry.error='';entry.uploading=true;entry.progress=0;if(state.page==='upload')renderUploadQueue();const id=Array.from(crypto.getRandomValues(new Uint8Array(16)),byte=>byte.toString(16).padStart(2,'0')).join('');entry.uploadId=id;entry.abortController=new AbortController();
+        const size=uploadChunkSize(entry.size),total=Math.ceil(entry.size/size);let index=0,conflictAction=entry.conflictAction||'prompt';
+        try{while(index<total){
+          const data=formBody({upload_id:id,index,total,category,device:entry.targetDevice||device,conflict_action:conflictAction});data.append('chunk',entry.file.slice(index*size,(index+1)*size),entry.name);
+          let response;
+          try{response=await requestJSONWithUploadProgress('upload_chunk.php',data,{signal:entry.abortController.signal,onProgress:ratio=>{const sent=Math.floor(((index+ratio)/total)*100);entry.progress=Math.max(Number(entry.progress)||0,Math.min(99,sent));updateUploadRowProgress(entry);}});}catch(error){
+            if(error.status===409&&error.data?.conflict){
+              entry.waitingConflict=true;if(state.page==='upload')renderUploadQueue();let choice=batch.action;
+              if(!choice){const selected=await duplicateChoice(entry,{filename:error.data.filename,url:error.data.server_image_url});if(selected){choice=selected.choice;if(selected.applyToBatch)batch.action=choice;}}
+              entry.waitingConflict=false;if(state.page==='upload')renderUploadQueue();
+              if(!choice)throw new Error('已取消同名图片处理');conflictAction=choice;continue;
+            }
+            throw error;
           }
-          throw error;
-        }
-        entry.progress=response.progress;entry.done=response.complete===true;entry.skipped=response.skipped===true;entry.resultName=response.relative?.split('/').pop()||entry.resultName;
-        if(entry.done&&!entry.skipped&&response.relative)queueUploadThumbnail(entry.file,response.device||entry.targetDevice||device,response.relative);
-        if(state.page==='upload')renderUploadQueue(false);index++;
-      }}catch(error){if(error.name==='AbortError'){try{await requestJSON('upload_cancel.php',formBody({upload_id:id}));}catch{}}else entry.error=error.message;}finally{entry.uploading=false;entry.abortController=null;if(state.page==='upload')renderUploadQueue(false);}
+          entry.progress=Math.max(Number(entry.progress)||0,Number(response.progress)||0);entry.done=response.complete===true;entry.skipped=response.skipped===true;entry.resultName=response.relative?.split('/').pop()||entry.resultName;
+          if(entry.done&&!entry.skipped&&response.relative)queueUploadThumbnail(entry.file,response.device||entry.targetDevice||device,response.relative);
+          if(state.page==='upload')updateUploadRowProgress(entry);index++;
+        }}catch(error){if(error.name==='AbortError'){try{await requestJSON('upload_cancel.php',formBody({upload_id:id}));}catch{}}else entry.error=error.message;}finally{entry.uploading=false;entry.abortController=null;if(state.page==='upload')renderUploadQueue();}
+      }
+    };
+    while(true){
+      await drainQueue();
+      await refreshLibrary();
+      if(!state.uploaded.some(file=>!file.done&&!processed.has(file)))break;
     }
-    await refreshLibrary();const remaining=state.uploaded.filter(file=>!file.done).length,kept=state.uploaded.filter(file=>file.skipped).length;toast(remaining?`部分图片未上传（${remaining} 张），请查看队列原因`:kept?`上传已完成，${kept} 张已跳过`:'图片已上传');
-  }finally{uploadBusy=false;if(state.page==='upload')renderUploadQueue(false);else render();}
+    const remaining=state.uploaded.filter(file=>!file.done).length,kept=state.uploaded.filter(file=>file.skipped).length;toast(remaining?`部分图片未上传（${remaining} 张），请查看队列原因`:kept?`上传已完成，${kept} 张已跳过`:'图片已上传');
+  }finally{uploadBusy=false;if(state.page==='upload')renderUploadQueue();else render();}
 }
 
 function profileSettings(){return baseProfileSettings()+(serverData.emailPending?`<form id="verify-email-form" class="settings-section"><h2>验证新邮箱</h2>${field('verification_code','邮箱验证码','','text','required pattern="[0-9]{6}" autocomplete="one-time-code"')}<div class="settings-inline-save"><button type="button" class="text-button" data-production-action="cancel-email">取消更换</button><button class="button primary" type="submit">确认更换</button></div></form>`:'');}
@@ -298,9 +334,10 @@ function generalSettings(){return baseGeneralSettings();}
 function mailSettings(){const s=serverData.settings,smtp=serverData.smtp;return `<form id="smtp-form" class="settings-section"><h2>邮件服务</h2><p>保存 SMTP 后可发送测试邮件。</p><div class="form-grid">${field('smtp_host','SMTP 服务器',smtp.host,'text','required')}${field('smtp_port','端口',smtp.port||465,'number','required min="1" max="65535"')}${field('smtp_username','发信账号',smtp.username,'text','required autocomplete="username"')}${field('smtp_password','授权码','','password','placeholder="留空保留已保存密码" autocomplete="new-password"')}<div class="field"><label for="smtp-encryption">连接加密</label><select id="smtp-encryption" name="smtp_encryption">${[['ssl','SSL / TLS'],['tls','STARTTLS']].map(([key,label])=>`<option value="${key}" ${smtp.encryption===key?'selected':''}>${label}</option>`).join('')}</select></div>${field('notification_email','通知邮箱',s.notification_email,'email')}</div><div class="settings-inline-save"><button type="button" class="button" data-action="test-mail">${icon('mail')}发送测试邮件</button><button class="button primary" type="submit">${icon('save')}保存邮件服务</button></div></form><section id="notification-settings" class="settings-section"><h2>通知与安全</h2>${checkbox('login_notification','登录通知',s.login_notification,'管理员登录后发送邮件通知。')}${checkbox('password_breach_alert','登录失败告警',s.password_breach_alert,'连续登录失败时发送安全提醒。')}${checkbox('request_rate_alert','异常请求告警',s.request_rate_alert,'接口出现异常访问时发送提醒。')} ${checkbox('daily_summary','每日访问摘要',s.daily_summary,'汇总每日接口请求和图片分发情况。')}<p class="notification-note">每日摘要需要配置服务器定时任务，详见部署文档。</p></section>`;}
 function runtimeSettings(){
   const s=serverData.settings;
+  const redis=serverData.redis||{enabled:false,host:'127.0.0.1',hasPassword:false};
   const tips={
     GD:{id:'gd',html:'<strong>用途</strong><br>生成图库缩略图，让图片列表加载更快。没有 GD 时会尝试 PHP Imagick 或 ImageMagick 命令行；都不可用时，工作台会按需在浏览器压缩可见图片并缓存为缩略图。<br><strong>安装</strong><br>宝塔：在对应 PHP 版本的设置中安装 GD 扩展并重启 PHP。Debian/Ubuntu：安装 <code>php-gd</code> 后重启对应 PHP-FPM。Windows：在当前 PHP 的 <code>php.ini</code> 启用 <code>extension=gd</code>，再重启 PHP。也可安装 ImageMagick，并把命令加入 PATH。'},
-    HTTPS:{id:'https',html:'<strong>用途</strong><br>加密浏览器与网站之间的传输，保护后台登录和会话。<br><strong>配置</strong><br>在宝塔或 Web 服务器中申请并启用 TLS/SSL 证书，确认可以通过 HTTPS 打开站点后，再开启“强制 HTTPS”。若使用反向代理，还需正确传递 HTTPS 状态并配置可信代理。'},
+    HTTPS:{id:'https',html:'<strong>用途</strong><br>加密浏览器与网站之间的传输，保护后台登录和会话。<br><strong>配置</strong><br>建议在宝塔或 Web 服务器中申请并启用 TLS/SSL 证书。后台会自动跟随当前访问协议；使用反向代理时，请正确传递 HTTPS 状态并配置可信代理。'},
     '存储目录':{id:'storage',html:'<strong>用途</strong><br>保存数据库、安装配置、会话、日志和缓存；后台需要在此目录创建和更新文件。<br><strong>配置</strong><br>将 <code>storage/</code> 的所有者设为实际运行 PHP-FPM 的系统用户，并授予该用户读写权限。Debian/Ubuntu 常见用户为 <code>www-data</code>，宝塔请使用站点 PHP 进程的运行用户。Windows 可给 IIS/PHP 运行账号授予修改权限。不要使用 777 权限。'}
   };
   const rows=Object.entries(serverData.environment).map(([label,value])=>{
@@ -310,12 +347,13 @@ function runtimeSettings(){
   }).join('');
   const logKinds=[['access','访问日志'],['upload','上传审计'],['login','登录日志']];
   const logRetention=logKinds.map(([kind,label])=>`<div class="log-retention-group">${checkbox(kind+'_log_auto_cleanup','自动清理'+label,s[kind+'_log_auto_cleanup'])}<div class="field log-retention-period"><label>${label}保留周期<select name="${kind}_log_retention_months">${[1,3,6,12,24,36,60].map(month=>`<option value="${month}" ${s[kind+'_log_retention_months']===month?'selected':''}>${month} 个月</option>`).join('')}</select></label></div></div>`).join('');
-  return `<div class="settings-section"><h2>运行环境</h2>${rows}</div><div id="retention-settings" class="settings-section log-retention-settings"><h2>日志保留</h2>${logRetention}<p class="log-retention-note">开启后同时清理数据库记录和本地日志文件。</p></div>`;
+  const redisSettings=`<form id="redis-settings-form" class="settings-section redis-settings"><div class="redis-settings-head"><div><h2>Redis 缓存</h2><p>图库索引缓存，关闭时使用本地缓存。</p></div><label class="redis-enable-control" for="setting-redis_enabled"><span>启用</span><input id="setting-redis_enabled" class="settings-toggle" role="switch" name="redis_enabled" type="checkbox" aria-label="启用 Redis" ${redis.enabled?'checked':''}></label></div><div class="form-grid redis-connection-fields">${field('redis_host','主机地址',redis.host||'127.0.0.1','text','required maxlength="255" placeholder="127.0.0.1:6379"')}<div class="field"><label for="prod-redis_password">密码</label><input id="prod-redis_password" name="redis_password" type="password" autocomplete="new-password" maxlength="4096" placeholder="${redis.hasPassword?'留空保留当前密码':'无密码可留空'}"></div></div>${redis.hasPassword?'<label class="redis-clear-password"><input name="redis_clear_password" type="checkbox">清除已保存密码</label>':''}<div class="settings-inline-save"><button class="button primary" type="submit">${icon('save')}保存设置</button></div></form>`;
+  return `<div class="settings-section"><h2>运行环境</h2>${rows}</div><div id="retention-settings" class="settings-section log-retention-settings"><h2>日志保留</h2>${logRetention}<p class="log-retention-note">开启后同时清理数据库记录和本地日志文件。</p></div>${redisSettings}`;
 }
 function otherSettings(){
-  const enabled=Boolean(serverData.settings.developer_mode),httpsEnabled=Boolean(serverData.settings.force_admin_https);
+  const enabled=Boolean(serverData.settings.developer_mode);
   const checks=developerDiagnostics.map(check=>`<div class="developer-check-row is-${escapeHTML(check.status)}"><strong>${escapeHTML(check.name)}</strong><span>${escapeHTML(check.detail)}</span></div>`).join('');
-  const developerSettings=`<div class="settings-section developer-mode-settings"><h2>其他设置</h2><div class="other-settings-divider other-settings-divider-top" role="separator"></div>${checkbox('developer_mode','开发者模式',enabled,'用于运行检查、维护图库和恢复初始状态。')}${enabled?`<div class="developer-tools-grid"><article class="developer-tool"><h3>环境自检</h3><button class="button" type="button" data-action="developer-diagnostics">运行检查</button>${checks?`<div class="developer-check-list" aria-live="polite">${checks}</div>`:''}</article><article class="developer-tool"><h3>刷新图库索引</h3><p>重扫图片并更新缓存。</p><button class="button" type="button" data-action="developer-rebuild-index">重建索引</button></article><article class="developer-tool developer-tool-danger"><h3>恢复初始状态</h3><p>删除所有站点数据并重新初始化。</p><button class="button danger" type="button" data-action="developer-cleanup-open">${icon('trash')}恢复初始状态</button></article></div>`:''}<div class="other-settings-divider" role="separator"></div>${checkbox('force_admin_https','强制 HTTPS 访问后台',httpsEnabled,'启用前请确认站点已配置 HTTPS。')}</div>`;
+  const developerSettings=`<div class="settings-section developer-mode-settings"><h2>其他设置</h2><div class="other-settings-divider other-settings-divider-top" role="separator"></div>${checkbox('developer_mode','开发者模式',enabled,'用于运行检查、维护图库和恢复初始状态。')}${enabled?`<div class="developer-tools-grid"><article class="developer-tool"><h3>环境自检</h3><button class="button" type="button" data-action="developer-diagnostics">运行检查</button>${checks?`<div class="developer-check-list" aria-live="polite">${checks}</div>`:''}</article><article class="developer-tool"><h3>刷新图库索引</h3><p>重扫图片并更新缓存。</p><button class="button" type="button" data-action="developer-rebuild-index">重建索引</button></article><article class="developer-tool developer-tool-danger"><h3>恢复初始状态</h3><p>删除所有站点数据并重新初始化。</p><button class="button danger" type="button" data-action="developer-cleanup-open">${icon('trash')}恢复初始状态</button></article></div>`:''}</div>`;
   const updateSettings=`<div class="settings-section"><div class="online-update-settings"><div><h3>在线更新</h3><p>当前版本 <strong>v${escapeHTML(PICAPI_VERSION)}</strong> · 发现新版本后可自动安装。</p><a href="${PICAPI_REPOSITORY_URL}" target="_blank" rel="noopener noreferrer">PicAPI 开源仓库 ↗</a><small id="update-check-status" role="status" aria-live="polite">检查后会先询问，再自动备份和安装。</small></div><button class="button" type="button" data-action="check-updates">检查更新</button></div></div>`;
   return developerSettings+loginSessionSettingsMarkup()+updateSettings;
 }async function checkPicApiUpdates(triggerButton){
@@ -356,17 +394,6 @@ async function saveDeveloperModeSetting(control){
       serverData.settings.developer_mode=value;
       render();
       toast(value?'开发者模式已开启':'开发者模式已关闭');
-    }catch(error){control.checked=previous;throw error;}
-  },control);
-}
-async function saveForceHttpsSetting(control){
-  if(control.disabled)return;
-  const previous=Boolean(serverData.settings.force_admin_https),value=control.checked;
-  await perform(async()=>{
-    try{
-      await apiRequest('settings',{force_admin_https:value});
-      serverData.settings.force_admin_https=value;
-      toast('HTTPS 访问设置已自动保存');
     }catch(error){control.checked=previous;throw error;}
   },control);
 }
@@ -583,7 +610,6 @@ document.addEventListener('change',event=>{
   const el=event.target;
   if(el.closest('#notification-settings')&&el.type==='checkbox'){void saveNotificationSetting(el);return;}
   if(el.id==='setting-developer_mode'){void saveDeveloperModeSetting(el);return;}
-  if(el.id==='setting-force_admin_https'){void saveForceHttpsSetting(el);return;}
   if(el.closest('#retention-settings')&&(el.type==='checkbox'||el.tagName==='SELECT')){void saveLogRetentionSetting(el);return;}
   if(el.id==='login-wallpaper-file'&&el.files?.[0]){const file=el.files[0];if(!file.type.startsWith('image/')){toast('请选择图片文件');return;}const url=URL.createObjectURL(file);perform(()=>saveLoginWallpaper(url),el);el.value='';}
   if(el.id==='avatar-file'){const file=el.files[0],previousAvatar=pendingAvatar;el.value='';chooseAvatar(file).then(cropped=>{pendingAvatar=cropped||previousAvatar;});}
@@ -624,6 +650,8 @@ document.addEventListener('submit',event=>{
       const result=await requestJSON('account_save.php',formBody({...data,action:'verify_email_change'}));serverData.emailPending=result.emailPending;const fresh=await apiRequest('bootstrap');Object.assign(profile,fresh.profile);Object.assign(profileDraft,fresh.profile);render();toast(result.message);
     }else if(form.id==='smtp-form'){
       await apiRequest('smtp',data);await apiRequest('settings',{notification_email:data.notification_email});serverData.smtp=(await apiRequest('bootstrap')).smtp;serverData.settings.notification_email=data.notification_email;render();toast('邮件服务已保存');
+    }else if(form.id==='redis-settings-form'){
+      const result=await apiRequest('redis-settings',{enabled:form.elements.redis_enabled.checked,host:data.redis_host,password:data.redis_password||'',clearPassword:form.elements.redis_clear_password?.checked||false});serverData.redis=result.result;render();toast(serverData.redis.enabled?'Redis 已测试并启用':'Redis 已关闭');
     }else if(form.id==='login-appearance-form'){
       if(data.login_background_type==='image'&&!serverData.settings.login_background_image){toast('请先上传壁纸或从图库选择。');return;}data.login_background_opacity=data.login_background_opacity!==undefined?Number(data.login_background_opacity):Number(serverData.settings.login_background_opacity??55);if(data.login_background_blur!==undefined)data.login_background_blur=Math.max(0,Math.min(50,Number(data.login_background_blur)||0));await apiRequest('settings',data);Object.assign(serverData.settings,data);render();toast('登录页面设置已保存');
     }else if(form.id==='docs-config-form'){const config={...docsDraft(),...data};Object.assign(docsDraft(),config);await apiRequest('docs',config);Object.assign(serverData.docs,config);clearDocsLocalDraft();state.docsView='preview';docsEditView='preview';render();toast('公开文档已更新');

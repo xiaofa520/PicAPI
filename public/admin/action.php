@@ -302,11 +302,12 @@ try {
     if ($action === 'rename_category') {
         $old = trim((string) ($_POST['old_category'] ?? ''));
         $name = trim((string) ($_POST['category_name'] ?? $_POST['new_category'] ?? ''));
-        $new = strtolower(trim((string) ($_POST['request_alias'] ?? $old)));
+        $new = strtolower(trim((string) ($_POST['request_alias'] ?? '')));
         if ($old === 'default') {
             save_default_category($name, $new);
             action_redirect('默认分类已更新。', 'folders');
         }
+        if ($new === '') $new = $old;
         if ($new === default_category_request_alias()) throw new RuntimeException('请求名称已被默认图库使用。');
         if (!valid_category($old) || !valid_category($new) || !valid_category_name($name)) {
             throw new RuntimeException('分类名称或请求名称不合法。');

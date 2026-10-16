@@ -54,9 +54,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     if ($action === 'login') {
         $credentials = decrypt_login_transport_credentials((string) ($_POST['credentials'] ?? ''));
         if ($credentials === null) {
-            // If Web Crypto is unavailable, accept the browser's native
-            // same-origin form submission only when the request is protected
-            // by HTTPS or is local development traffic.
+            // Allow native form submission only for HTTPS or local development
+            // traffic; remote HTTP would expose the password in transit.
             $plainUsername = $_POST['username'] ?? null;
             $plainPassword = $_POST['password'] ?? null;
             if (is_string($plainUsername) && is_string($plainPassword)) {

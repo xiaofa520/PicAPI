@@ -9,7 +9,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') abort_request(405, '请求
 verify_csrf();
 
 try {
-    $allowed = ['admin_session_days', 'site_name', 'font_size', 'theme_mode', 'theme_color', 'theme_background', 'theme_surface', 'theme_text', 'theme_muted', 'dark_theme_color', 'dark_theme_background', 'dark_theme_surface', 'dark_theme_text', 'dark_theme_muted', 'light_theme_color', 'light_theme_background', 'light_theme_surface', 'light_theme_text', 'light_theme_muted', 'notification_email', 'login_notification', 'password_breach_alert', 'request_rate_alert', 'request_window_seconds', 'request_threshold', 'ip_blacklist_threshold', 'access_log_auto_cleanup', 'access_log_retention_months', 'upload_log_auto_cleanup', 'upload_log_retention_months', 'login_log_auto_cleanup', 'login_log_retention_months', 'force_admin_https'];
+    $allowed = ['admin_session_days', 'site_name', 'font_size', 'theme_mode', 'theme_color', 'theme_background', 'theme_surface', 'theme_text', 'theme_muted', 'dark_theme_color', 'dark_theme_background', 'dark_theme_surface', 'dark_theme_text', 'dark_theme_muted', 'light_theme_color', 'light_theme_background', 'light_theme_surface', 'light_theme_text', 'light_theme_muted', 'notification_email', 'login_notification', 'password_breach_alert', 'request_rate_alert', 'request_window_seconds', 'request_threshold', 'ip_blacklist_threshold', 'access_log_auto_cleanup', 'access_log_retention_months', 'upload_log_auto_cleanup', 'upload_log_retention_months', 'login_log_auto_cleanup', 'login_log_retention_months'];
     $changes = [];
     foreach ($allowed as $key) {
         if (array_key_exists($key, $_POST)) $changes[$key] = $_POST[$key];

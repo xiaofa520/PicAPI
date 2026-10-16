@@ -302,10 +302,6 @@ function prepare_setup_database(array $input, bool $create = true): array
         return ['created' => false, 'message' => '远程数据库连接成功。'];
     }
 
-    if (!preg_match('/^[A-Za-z_][A-Za-z0-9_]{0,63}$/', $database['name'])) {
-        throw new InvalidArgumentException('本地自动创建数据库时，库名只能使用字母、数字和下划线，且不能以数字开头。');
-    }
-
     $driver = $database['type'] === 'sqlserver' ? 'sqlsrv' : $database['type'];
     if (!in_array($driver, PDO::getAvailableDrivers(), true)) {
         throw new RuntimeException("服务器未安装 {$driver} 数据库驱动，请安装后重试。");
@@ -319,21 +315,36 @@ function prepare_setup_database(array $input, bool $create = true): array
         $before = $pdo->prepare('SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = ?');
         $before->execute([$database['name']]);
         $created = $before->fetchColumn() === false;
-        if ($create) $pdo->exec('CREATE DATABASE IF NOT EXISTS `' . str_replace('`', '``', $database['name']) . '` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci');
+        if ($create && $created) {
+            if (!preg_match('/^[A-Za-z_][A-Za-z0-9_]{0,63}$/', $database['name'])) {
+                throw new InvalidArgumentException('本地自动创建数据库时，库名只能使用字母、数字和下划线，且不能以数字开头。');
+            }
+            $pdo->exec('CREATE DATABASE IF NOT EXISTS `' . str_replace('`', '``', $database['name']) . '` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci');
+        }
     } elseif ($database['type'] === 'pgsql') {
         $serverDsn = 'pgsql:host=' . $database['host'] . ($port === '' ? '' : ';port=' . $port) . ';dbname=postgres';
         $pdo = new PDO($serverDsn, $database['username'], $database['password'], [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_TIMEOUT => 5]);
         $before = $pdo->prepare('SELECT 1 FROM pg_database WHERE datname = ?');
         $before->execute([$database['name']]);
         $created = $before->fetchColumn() === false;
-        if ($create && $created) $pdo->exec('CREATE DATABASE "' . str_replace('"', '""', $database['name']) . '"');
+        if ($create && $created) {
+            if (!preg_match('/^[A-Za-z_][A-Za-z0-9_]{0,63}$/', $database['name'])) {
+                throw new InvalidArgumentException('本地自动创建数据库时，库名只能使用字母、数字和下划线，且不能以数字开头。');
+            }
+            $pdo->exec('CREATE DATABASE "' . str_replace('"', '""', $database['name']) . '"');
+        }
     } else {
         $serverDsn = 'sqlsrv:Server=' . $database['host'] . ($port === '' ? '' : ',' . $port);
         $pdo = new PDO($serverDsn, $database['username'], $database['password'], [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_TIMEOUT => 5]);
         $before = $pdo->prepare('SELECT DB_ID(?)');
         $before->execute([$database['name']]);
         $created = $before->fetchColumn() === null;
-        if ($create && $created) $pdo->exec('CREATE DATABASE [' . str_replace(']', ']]', $database['name']) . ']');
+        if ($create && $created) {
+            if (!preg_match('/^[A-Za-z_][A-Za-z0-9_]{0,63}$/', $database['name'])) {
+                throw new InvalidArgumentException('本地自动创建数据库时，库名只能使用字母、数字和下划线，且不能以数字开头。');
+            }
+            $pdo->exec('CREATE DATABASE [' . str_replace(']', ']]', $database['name']) . ']');
+        }
     }
 
     if (!$create && $created) return ['created' => false, 'message' => '数据库服务器连接成功，完成初始化时创建数据库。'];

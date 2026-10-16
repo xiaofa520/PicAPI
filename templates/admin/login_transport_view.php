@@ -29,15 +29,8 @@
     form.addEventListener('submit', async event => {
         if (form.dataset.encrypted === 'true') return;
         if (!window.crypto?.subtle) {
-            const host = location.hostname.toLowerCase();
-            const loopback = host === 'localhost' || host.endsWith('.localhost')
-                || host === '::1' || host === '[::1]' || /^127(?:\.\d{1,3}){3}$/.test(host);
-            if (location.protocol !== 'https:' && !loopback) {
-                event.preventDefault();
-                alert('登录凭据加密不可用，请使用 HTTPS 地址后重试。');
-                return;
-            }
-            // Native submission is allowed only over HTTPS or loopback.
+            // Remote HTTP origins often lack Web Crypto. Submit normally and
+            // show the page-level HTTPS recommendation to the administrator.
             form.dataset.encrypted = 'true';
             return;
         }
